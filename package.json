@@ -9,7 +9,7 @@
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "vapid": "web-push generate-vapid-keys",
-    "test": "node --import tsx --test lib/schedule.test.ts lib/schedule-supplements.test.ts lib/schedule-reminder-status.test.ts lib/history.test.ts lib/time.test.ts"
+    "test": "node --import tsx --test lib/schedule.test.ts lib/schedule-supplements.test.ts lib/schedule-reminder-status.test.ts lib/history.test.ts lib/time.test.ts lib/contrast.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.0",
@@ -24,6 +24,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/web-push": "^3.6.4",
+    "playwright": "^1.64.1",
     "prisma": "^6.16.0",
     "tailwindcss": "^4.1.0",
     "tsx": "^4.23.15",
