@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Settings, State } from "@/lib/types";
+import type { History, Settings, State } from "@/lib/types";
+import { readCachedState, writeCachedState } from "@/lib/stateCache";
+import { HistoryChart } from "./history-chart";
 
 type PushStatus = "loading" | "unsupported" | "install" | "ask" | "denied" | "on";
 
@@ -51,6 +53,14 @@ async function api(path: string, method = "GET", body?: unknown, signal?: AbortS
 
 const LOAD_TIMEOUT_MS = 10_000;
 
+const BUTTERFLIES = [
+  { left: "30%", delay: "0ms", drift: "-16px" },
+  { left: "48%", delay: "120ms", drift: "20px" },
+  { left: "62%", delay: "60ms", drift: "-10px" },
+  { left: "40%", delay: "200ms", drift: "14px" },
+  { left: "55%", delay: "260ms", drift: "-18px" },
+];
+
 export default function Home() {
   const [deviceId, setDeviceId] = useState("");
   const [state, setState] = useState<State | null>(null);
@@ -60,11 +70,23 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [pushError, setPushError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<History | null>(null);
   const [fromReminder, setFromReminder] = useState(false);
+  const [customMl, setCustomMl] = useState("");
+  const [newSuppName, setNewSuppName] = useState("");
+  const [newSuppTime, setNewSuppTime] = useState("09:00");
+  const [celebrate, setCelebrate] = useState(false);
+  const wasDoneRef = useRef(false);
 
   const flash = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2600);
+  };
+
+  const commit = (s: State) => {
+    setState(s);
+    writeCachedState(s);
   };
 
   // Load state, register the service worker, and work out where push setup stands.
@@ -75,13 +97,16 @@ export default function Home() {
     setDeviceId(id);
     setFromReminder(new URLSearchParams(location.search).get("from") === "reminder");
 
+    const cached = readCachedState();
+    if (cached) setState(cached);
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
     try {
       let s: State = await api(`/api/state?deviceId=${id}`, "GET", undefined, controller.signal);
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       if (tz && tz !== s.settings.timezone) s = await api("/api/settings", "PUT", { deviceId: id, timezone: tz });
-      setState(s);
+      commit(s);
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
         setPush(isIOS() && !isStandalone() ? "install" : "unsupported");
         return;
@@ -92,7 +117,9 @@ export default function Home() {
       else setPush("ask");
     } catch (e) {
       const err = e as Error;
-      setLoadError(err.name === "AbortError" ? "Taking too long to load. Check your connection and try again." : err.message);
+      const message = err.name === "AbortError" ? "Taking too long to load. Check your connection and try again." : err.message;
+      if (cached) flash(message);
+      else setLoadError(message);
     } finally {
       clearTimeout(timer);
     }
@@ -116,7 +143,7 @@ export default function Home() {
       const sub =
         (await reg.pushManager.getSubscription()) ??
         (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToUint8(VAPID) }));
-      setState(await api("/api/subscribe", "POST", { deviceId, subscription: sub.toJSON() }));
+      commit(await api("/api/subscribe", "POST", { deviceId, subscription: sub.toJSON() }));
       setPush("on");
       flash("Reminders are on 💧");
     } catch (e) {
@@ -130,21 +157,36 @@ export default function Home() {
 
   const drink = useCallback(
     async (amountMl?: number) => {
-      if (!deviceId) return;
+      if (!deviceId || !state) return;
       if ("vibrate" in navigator) navigator.vibrate?.(10);
+      const amount = amountMl ?? state.settings.glassMl;
+      const previous = state;
+      const optimisticLog = { id: `pending-${Date.now()}`, amountMl: amount, at: new Date().toISOString() };
+      setState({ ...state, todayMl: state.todayMl + amount, logs: [optimisticLog, ...state.logs] });
+      setFromReminder(false);
       try {
-        setState(await api("/api/log", "POST", { deviceId, amountMl }));
-        setFromReminder(false);
+        commit(await api("/api/log", "POST", { deviceId, amountMl }));
       } catch (e) {
+        setState(previous);
         flash((e as Error).message);
       }
     },
-    [deviceId]
+    [deviceId, state]
   );
+
+  const addCustom = () => {
+    const amount = Math.round(Number(customMl));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 3000) {
+      flash("Enter an amount between 1 and 3000 ml.");
+      return;
+    }
+    drink(amount);
+    setCustomMl("");
+  };
 
   const undo = async () => {
     try {
-      setState(await api("/api/log", "DELETE", { deviceId }));
+      commit(await api("/api/log", "DELETE", { deviceId }));
     } catch (e) {
       flash((e as Error).message);
     }
@@ -154,7 +196,66 @@ export default function Home() {
     if (!state) return;
     setState({ ...state, settings: { ...state.settings, ...patch } });
     try {
-      setState(await api("/api/settings", "PUT", { deviceId, ...patch }));
+      commit(await api("/api/settings", "PUT", { deviceId, ...patch }));
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
+  const toggleHistory = async () => {
+    setShowHistory((v) => !v);
+    if (!history && deviceId) {
+      try {
+        setHistory(await api(`/api/history?deviceId=${deviceId}`));
+      } catch (e) {
+        flash((e as Error).message);
+      }
+    }
+  };
+
+  const toggleSupplement = useCallback(
+    async (supplementId: string, takenToday: boolean) => {
+      if (!deviceId || !state) return;
+      const previous = state;
+      setState({
+        ...state,
+        supplements: state.supplements.map((v) => (v.id === supplementId ? { ...v, takenToday: !takenToday } : v)),
+      });
+      try {
+        commit(
+          takenToday
+            ? await api("/api/supplements/log", "DELETE", { deviceId, supplementId })
+            : await api("/api/supplements/log", "POST", { deviceId, supplementId })
+        );
+      } catch (e) {
+        setState(previous);
+        flash((e as Error).message);
+      }
+    },
+    [deviceId, state]
+  );
+
+  const addSupplement = async () => {
+    if (!newSuppName.trim()) return;
+    try {
+      commit(await api("/api/supplements", "POST", { deviceId, name: newSuppName.trim(), timeOfDay: newSuppTime }));
+      setNewSuppName("");
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
+  const updateSupplement = async (id: string, patch: { name?: string; timeOfDay?: string; enabled?: boolean }) => {
+    try {
+      commit(await api("/api/supplements", "PUT", { deviceId, id, ...patch }));
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
+  const deleteSupplement = async (id: string) => {
+    try {
+      commit(await api("/api/supplements", "DELETE", { deviceId, id }));
     } catch (e) {
       flash((e as Error).message);
     }
@@ -177,6 +278,19 @@ export default function Home() {
     () => (state ? Math.min(state.todayMl / state.settings.goalMl, 1) : 0),
     [state]
   );
+
+  useEffect(() => {
+    if (!state) return;
+    const nowDone = state.todayMl >= state.settings.goalMl;
+    if (nowDone && !wasDoneRef.current) setCelebrate(true);
+    wasDoneRef.current = nowDone;
+  }, [state]);
+
+  useEffect(() => {
+    if (!celebrate) return;
+    const t = setTimeout(() => setCelebrate(false), 2000);
+    return () => clearTimeout(t);
+  }, [celebrate]);
 
   if (loadError && !state) {
     return (
@@ -210,14 +324,36 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col px-5 pb-10 pt-4">
+      {celebrate && (
+        <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+          {BUTTERFLIES.map((b, i) => (
+            <span
+              key={i}
+              className="flutter absolute bottom-24 text-4xl"
+              style={{ left: b.left, animationDelay: b.delay, "--drift": b.drift } as React.CSSProperties}
+            >
+              🦋
+            </span>
+          ))}
+        </div>
+      )}
+
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Sip</h1>
-        <button
-          onClick={() => setShowSettings((v) => !v)}
-          className="rounded-full bg-deep px-4 py-2 text-sm font-medium text-foam/80 active:scale-95"
-        >
-          {showSettings ? "Done" : "Settings"}
-        </button>
+        <h1 className="text-2xl font-bold tracking-tight">Sip 🦋</h1>
+        <div className="flex gap-2">
+          <button
+            onClick={toggleHistory}
+            className="rounded-full bg-deep px-4 py-2 text-sm font-medium text-foam/80 active:scale-95"
+          >
+            {showHistory ? "Done" : "History"}
+          </button>
+          <button
+            onClick={() => setShowSettings((v) => !v)}
+            className="rounded-full bg-deep px-4 py-2 text-sm font-medium text-foam/80 active:scale-95"
+          >
+            {showSettings ? "Done" : "Settings"}
+          </button>
+        </div>
       </header>
 
       {fromReminder && !done && (
@@ -269,6 +405,21 @@ export default function Home() {
             </button>
           ))}
         </div>
+        <div className="mt-3 flex gap-2">
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={3000}
+            placeholder="Custom ml"
+            value={customMl}
+            onChange={(e) => setCustomMl(e.target.value)}
+            className="sel flex-1"
+          />
+          <button onClick={addCustom} className="rounded-2xl bg-deep px-5 py-3 font-medium active:scale-95">
+            Add
+          </button>
+        </div>
       </section>
 
       {/* Reminders */}
@@ -314,6 +465,9 @@ export default function Home() {
                 ? `Every ${s.intervalMin >= 60 ? `${s.intervalMin / 60} h` : `${s.intervalMin} min`}, ${hourLabel(s.startHour)}–${hourLabel(s.endHour)}. Logging a drink resets the timer, and reminders stop once you hit your goal.`
                 : "Paused."}
             </p>
+            {s.enabled && state.nextReminderAt && (
+              <p className="text-foam/60">Next reminder around {timeLabel(state.nextReminderAt)}</p>
+            )}
             <div className="flex gap-3">
               <button onClick={() => save({ enabled: !s.enabled })} className="flex-1 rounded-2xl bg-ink py-2.5 font-medium">
                 {s.enabled ? "Pause" : "Resume"}
@@ -366,7 +520,81 @@ export default function Home() {
               ))}
             </select>
           </Field>
+          <div className="space-y-2 border-t border-foam/10 pt-4">
+            <p className="text-foam/80">Vitamins</p>
+            {state.supplements.map((v) => (
+              <div key={v.id} className="flex items-center gap-2">
+                <input
+                  defaultValue={v.name}
+                  onBlur={(e) => e.target.value.trim() && e.target.value !== v.name && updateSupplement(v.id, { name: e.target.value.trim() })}
+                  className="sel min-w-0 flex-1"
+                />
+                <input
+                  type="time"
+                  defaultValue={v.timeOfDay}
+                  onBlur={(e) => e.target.value !== v.timeOfDay && updateSupplement(v.id, { timeOfDay: e.target.value })}
+                  className="sel"
+                />
+                <button onClick={() => deleteSupplement(v.id)} className="text-water active:opacity-60">
+                  Delete
+                </button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="Vitamin name"
+                value={newSuppName}
+                onChange={(e) => setNewSuppName(e.target.value)}
+                className="sel min-w-0 flex-1"
+              />
+              <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel" />
+              <button onClick={addSupplement} className="rounded-xl bg-ink px-3 py-2 font-medium active:scale-95">
+                Add
+              </button>
+            </div>
+          </div>
           <p className="text-foam/50">Time zone: {s.timezone}</p>
+        </section>
+      )}
+
+      {/* Vitamins */}
+      {state.supplements.length > 0 && (
+        <section className="mt-6 rounded-3xl bg-deep p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Vitamins today</h2>
+            <span className="text-sm text-foam/60">
+              {state.supplements.filter((v) => v.takenToday).length} of {state.supplements.length} taken
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {state.supplements.map((v) => (
+              <li key={v.id}>
+                <button
+                  onClick={() => toggleSupplement(v.id, v.takenToday)}
+                  className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
+                    v.takenToday ? "bg-water/15 text-foam" : "bg-ink text-foam/80"
+                  }`}
+                >
+                  <span>{v.takenToday ? "✅" : "🦋"} {v.name}</span>
+                  <span className="text-foam/50">{v.timeOfDay}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* History */}
+      {showHistory && (
+        <section className="mt-4 rounded-3xl bg-deep p-5">
+          <h2 className="font-semibold">Last 7 days</h2>
+          {history ? (
+            <div className="mt-3">
+              <HistoryChart history={history} />
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-foam/60">Loading…</p>
+          )}
         </section>
       )}
 
@@ -381,7 +609,7 @@ export default function Home() {
           )}
         </div>
         {state.logs.length === 0 ? (
-          <p className="mt-2 text-sm text-foam/50">Nothing logged yet.</p>
+          <p className="mt-2 text-sm text-foam/50">🦋 Nothing logged yet.</p>
         ) : (
           <ul className="mt-2 divide-y divide-foam/10">
             {state.logs.map((l) => (
