@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b1e33;
+  --color-deep: #0f2a47;
+  --color-water: #38bdf8;
+  --color-foam: #e0f2fe;
+}
+
+html, body { background: var(--color-ink); color: var(--color-foam); }
+body {
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-tap-highlight-color: transparent;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
+}
+
+@keyframes wave { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.wave { animation: wave 6s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .wave { animation: none; } }
+
+.sel {
+  appearance: none;
+  background: var(--color-ink);
+  color: var(--color-foam);
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  font-weight: 500;
+  font-size: 16px; /* 16px stops iOS from zooming in on focus */
+}

@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// One installed copy of the app (your iPhone). No login needed for a personal app.
+model Device {
+  id          String    @id
+  timezone    String    @default("Africa/Cairo")
+  intervalMin Int       @default(60)
+  startHour   Int       @default(9)
+  endHour     Int       @default(22)
+  goalMl      Int       @default(2500)
+  glassMl     Int       @default(250)
+  enabled     Boolean   @default(true)
+  lastSentAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  subscriptions PushSubscription[]
+  logs          WaterLog[]
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+model WaterLog {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  amountMl  Int
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, createdAt])
+}
