@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add optimistic updates, offline-friendly local caching, a 7-day history chart with streak, a custom amount input, a predicted next-reminder time, system-following light mode, and a goal-reached celebration — on top of the already-fixed loading bug.
+**Goal:** Add optimistic updates, offline-friendly local caching, a 7-day history chart with streak, a custom amount input, a predicted next-reminder time, system-following light mode, and a goal-reached celebration — on top of the already-fixed loading bug. Then add vitamin/supplement reminders (Feature A) and restyle the app around a blue butterfly theme, including a new app icon (Feature B).
 
-**Architecture:** Keep the existing single-page client component (`app/page.tsx`) as the UI host. Pure, testable logic (streak/history bucketing, next-reminder prediction) lives in `lib/`, following the existing `lib/schedule.ts` / `lib/time.ts` pattern. One new API route (`/api/history`) follows the existing route conventions in `app/api/*`. No state management library, no chart library, no new UI framework.
+**Architecture:** Keep the existing single-page client component (`app/page.tsx`) as the UI host. Pure, testable logic (streak/history bucketing, next-reminder prediction, supplement due-checking) lives in `lib/`, following the existing `lib/schedule.ts` / `lib/time.ts` pattern. New API routes (`/api/history`, `/api/supplements`, `/api/supplements/log`) follow the existing route conventions in `app/api/*`. Supplements get their own Prisma models (`Supplement`, `SupplementLog`), parallel to the existing `WaterLog`, and their own push-notification tag so they never collide with water reminders. No state management library, no chart library, no new UI framework.
 
-**Tech Stack:** Next.js 15 App Router, Prisma 6 + Neon Postgres, Tailwind v4 (CSS-variable theming), plain SVG for the chart, `node:test` + `tsx` (new, lightweight devDependency) for pure-function tests.
+**Tech Stack:** Next.js 15 App Router, Prisma 6 + Neon Postgres, Tailwind v4 (CSS-variable theming), plain SVG for the chart, `node:test` + `tsx` (new, lightweight devDependency) for pure-function tests. The new app icon is rasterized from hand-authored SVG using `sharp`, which is already present in `node_modules` as a transitive/optional dependency of Next.js — used ad hoc via a throwaway script, never added to `package.json`, so it adds no new dependency.
 
 **Spec:** User-provided task description (see conversation); no separate spec file.
 
@@ -42,6 +42,11 @@ These were added after the user re-raised the original bug report mid-plan. 0a a
 - **Brand-new device with zero logs ever** — `/api/history` and the bucketing/streak functions must handle an empty log list without throwing, returning all-zero days and `streak: 0`.
 - **`nextReminderAt` with a wrap-around window** (e.g. `startHour=22, endHour=6`) and "now" near the boundary — must return a time at or after `now`, never in the past, and must terminate (bounded iteration).
 - **Custom amount input with invalid input** (`"abc"`, `"-5"`, `"99999"`, `"12.7"`, empty) — must be rejected client-side with feedback, matching the server's own `1–3000` clamp in `app/api/log/route.ts:11-14`, instead of silently sending a value the server will quietly change.
+- **A vitamin added after its time already passed today** — must not immediately nudge retroactively; it should only start being due from its next occurrence onward (`createdAt` vs. today's due instant).
+- **A vitamin nudged exactly twice with no response** — the cron job must stop forever for that day once `nudgesSentToday >= 2`, never a third push, and must resume normally the next day once the goal-equivalent "taken today" check naturally resets at local midnight.
+- **Water and vitamin reminders must stay fully independent** — reaching the water goal must not suppress a due vitamin nudge, and marking a vitamin taken must not touch `Device.lastSentAt` or reset the water reminder timer (and vice versa).
+
+**Known limitation, accepted rather than engineered around:** a vitamin scheduled very close to local midnight (e.g. 11:30 PM) whose first nudge fires, then crosses into the next calendar day before the 1-hour re-nudge window closes, may not get its re-nudge — `dueSupplement`'s due-time calculation is always relative to "today" as seen from `now`, so a day boundary between the two nudges shifts what "today's due time" means. This mirrors an existing rough edge in `shouldRemind`'s own day-boundary handling and isn't worth a stateful fix for a personal reminder app; a user can always just take a near-midnight vitamin on the first nudge.
 
 ---
 
@@ -1041,32 +1046,58 @@ git commit -m "Add 7-day history chart with goal line and streak"
 
 ---
 
-## Task 12: Light mode following system setting
+## Task 12: Light mode + the blue butterfly palette
 
 **Files:**
 - Modify: `app/globals.css`
 - Modify: `app/layout.tsx:11-16`
 
-**Interfaces:** none (CSS/metadata only — no component code changes).
+**Interfaces:** none (CSS/metadata only — no component code changes). This task now also sets the final color values for Feature B (the blue butterfly restyle), so the palette only needs to be chosen once.
 
-- [ ] **Step 1: Add light-theme token overrides to `app/globals.css`**
+- [ ] **Step 1: Replace the base (dark) theme colors in `app/globals.css` with the blue butterfly palette**
 
-After the existing `@theme { ... }` block in `app/globals.css`, add:
+Replace the existing `@theme { ... }` block:
+
+```css
+@theme {
+  --color-ink: #0b1e33;
+  --color-deep: #0f2a47;
+  --color-water: #38bdf8;
+  --color-foam: #e0f2fe;
+}
+```
+
+with:
+
+```css
+@theme {
+  --color-ink: #0a1430;
+  --color-deep: #142a5e;
+  --color-water: #4fa8ff;
+  --color-foam: #eaf2ff;
+}
+```
+
+(Deep navy background, indigo-blue cards, a bright cobalt "butterfly blue" accent, soft near-white blue-tinted text — the same four roles as before, just re-hued toward the new blue-butterfly identity instead of the original sky-blue.)
+
+- [ ] **Step 2: Add light-theme token overrides**
+
+Right after the `@theme { ... }` block, add:
 
 ```css
 @media (prefers-color-scheme: light) {
   :root {
-    --color-ink: #eef6fb;
-    --color-deep: #dbeafe;
-    --color-water: #0284c7;
-    --color-foam: #0b1e33;
+    --color-ink: #eef4ff;
+    --color-deep: #d7e6ff;
+    --color-water: #2f6fe0;
+    --color-foam: #0a1430;
   }
 }
 ```
 
 (These four custom properties are the only color source for every `bg-*`/`text-*`/`border-*` utility in the app — Tailwind v4's `@theme` block makes each utility reference the CSS variable rather than inlining its value, so overriding them here re-themes the whole UI with zero component changes. Each name keeps its structural *role* — `ink` = page background, `deep` = card background, `water` = accent, `foam` = primary foreground — while its literal color flips for light mode. This is why elements that intentionally invert foreground/background in the dark theme, like the "Turn on reminders" button (`bg-foam text-ink`), keep the same *relative* contrast in light mode instead of breaking.)
 
-- [ ] **Step 2: Add matching theme-color meta tags in `app/layout.tsx`**
+- [ ] **Step 3: Add matching theme-color meta tags in `app/layout.tsx`**
 
 Replace the `viewport` export in `app/layout.tsx`:
 
@@ -1087,26 +1118,26 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0b1e33" },
-    { media: "(prefers-color-scheme: light)", color: "#eef6fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a1430" },
+    { media: "(prefers-color-scheme: light)", color: "#eef4ff" },
   ],
 };
 ```
 
-- [ ] **Step 3: Manually verify in a browser**
+- [ ] **Step 4: Manually verify in a browser**
 
-Run: `npm run dev`, open the app, and toggle the OS/browser color-scheme preference (in Chrome devtools: Rendering tab → "Emulate CSS media feature prefers-color-scheme"). Confirm the whole UI re-themes — background, cards, text, the "Turn on reminders" pill, the glass border — with no illegible or low-contrast combinations, and confirm it defaults to the existing dark look when no light preference is set.
+Run: `npm run dev`, open the app, and toggle the OS/browser color-scheme preference (in Chrome devtools: Rendering tab → "Emulate CSS media feature prefers-color-scheme"). Confirm the whole UI re-themes to the new blue-butterfly palette in both modes — background, cards, text, the "Turn on reminders" pill, the glass border — with no illegible or low-contrast combinations, and confirm dark is still the default when no preference is set. (Task 26 does a dedicated contrast pass once the icon and emoji placements from Feature B are also in.)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add app/globals.css app/layout.tsx
-git commit -m "Add light theme that follows the system color scheme"
+git commit -m "Add light theme and the blue butterfly color palette"
 ```
 
 ---
 
-## Task 13: Goal-reached celebration
+## Task 13: Goal-reached celebration — butterflies fluttering up
 
 **Files:**
 - Modify: `app/globals.css`
@@ -1119,15 +1150,15 @@ git commit -m "Add light theme that follows the system color scheme"
 After the existing `.wave` rule and its reduced-motion override, add:
 
 ```css
-@keyframes celebrate-pop {
-  0% { transform: scale(0.4) rotate(-8deg); opacity: 0; }
-  40% { transform: scale(1.15) rotate(4deg); opacity: 1; }
-  70% { transform: scale(1) rotate(0deg); opacity: 1; }
-  100% { transform: scale(1) rotate(0deg); opacity: 0; }
+@keyframes flutter-up {
+  0% { transform: translateY(0) translateX(0) rotate(0deg) scale(0.6); opacity: 0; }
+  15% { opacity: 1; }
+  50% { transform: translateY(-120px) translateX(var(--drift, 12px)) rotate(10deg) scale(1); }
+  100% { transform: translateY(-260px) translateX(calc(var(--drift, 12px) * -1)) rotate(-8deg) scale(0.9); opacity: 0; }
 }
-.celebrate { animation: celebrate-pop 1.6s ease-out forwards; }
+.flutter { animation: flutter-up 1.8s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) {
-  .celebrate { animation: none; opacity: 1; }
+  .flutter { animation: none; opacity: 1; transform: none; }
 }
 ```
 
@@ -1158,30 +1189,52 @@ useEffect(() => {
 
 useEffect(() => {
   if (!celebrate) return;
-  const t = setTimeout(() => setCelebrate(false), 1800);
+  const t = setTimeout(() => setCelebrate(false), 2000);
   return () => clearTimeout(t);
 }, [celebrate]);
 ```
+
+Add a small fixed set of butterflies with staggered delay/drift/position — no `Math.random()` at render time, so the component stays deterministic across re-renders:
+
+```typescript
+const BUTTERFLIES = [
+  { left: "30%", delay: "0ms", drift: "-16px" },
+  { left: "48%", delay: "120ms", drift: "20px" },
+  { left: "62%", delay: "60ms", drift: "-10px" },
+  { left: "40%", delay: "200ms", drift: "14px" },
+  { left: "55%", delay: "260ms", drift: "-18px" },
+];
+```
+
+(Place this constant near the other module-level constants at the top of the file, alongside `LOAD_TIMEOUT_MS` — it never changes, so it doesn't belong inside the component body.)
 
 Add the render block right after the opening `<main ...>` tag of the main return (before the `<header>`):
 
 ```tsx
 {celebrate && (
-  <div className="pointer-events-none fixed inset-0 grid place-items-center" aria-hidden="true">
-    <span className="celebrate text-7xl">🎉</span>
+  <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+    {BUTTERFLIES.map((b, i) => (
+      <span
+        key={i}
+        className="flutter absolute bottom-24 text-4xl"
+        style={{ left: b.left, animationDelay: b.delay, "--drift": b.drift } as React.CSSProperties}
+      >
+        🦋
+      </span>
+    ))}
   </div>
 )}
 ```
 
 - [ ] **Step 3: Manually verify, including reduced motion**
 
-Run: `npm run dev`. Log drinks until you hit the daily goal — confirm the 🎉 pops in, scales/rotates briefly, and fades out after under 2 seconds, without blocking any taps underneath (`pointer-events-none`). Then enable "prefers reduced motion" in your OS accessibility settings (or devtools' Rendering tab → "Emulate CSS media feature prefers-reduced-motion: reduce") and repeat — confirm the emoji still appears and disappears on the same timer, but without the scale/rotate animation.
+Run: `npm run dev`. Log drinks until you hit the daily goal — confirm five 🦋 flutter up from near the bottom of the screen with a slight staggered delay and side-to-side drift, fading out after under 2 seconds, without blocking any taps underneath (`pointer-events-none`). Then enable "prefers reduced motion" in your OS accessibility settings (or devtools' Rendering tab → "Emulate CSS media feature prefers-reduced-motion: reduce") and repeat — confirm the butterflies still appear and disappear on the same timer, but stay in place rather than flying up.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add app/globals.css app/page.tsx
-git commit -m "Add goal-reached celebration, respecting prefers-reduced-motion"
+git commit -m "Add butterfly celebration on reaching the daily goal, respecting prefers-reduced-motion"
 ```
 
 ---
@@ -1209,3 +1262,1198 @@ Run: `npm start`, open `http://localhost:3000`, and walk through: initial load, 
 ```bash
 git push origin main
 ```
+
+(This is a checkpoint, not the end of the plan — Tasks 15–23 add Feature A, Tasks 24–26 add Feature B, and Task 27 is the real final verification and push.)
+
+---
+
+## Task 15: Prisma schema for supplements
+
+**Files:**
+- Modify: `prisma/schema.prisma`
+
+**Interfaces:**
+- Produces: `Supplement` and `SupplementLog` Prisma models, a `supplements` back-relation on `Device`. Consumed by every later Feature A task.
+
+- [ ] **Step 1: Add the models**
+
+In `prisma/schema.prisma`, add `supplements Supplement[]` to the `Device` model's relations (alongside the existing `subscriptions`/`logs` lines):
+
+```prisma
+  subscriptions PushSubscription[]
+  logs          WaterLog[]
+  supplements   Supplement[]
+```
+
+Then add two new models after `WaterLog`:
+
+```prisma
+/// Something taken on a daily schedule (a vitamin, a pill) — independent of water tracking.
+model Supplement {
+  id          String    @id @default(cuid())
+  deviceId    String
+  device      Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  name        String
+  timeOfDay   String    // "HH:MM", 24h, in the device's local time zone
+  enabled     Boolean   @default(true)
+  lastNudgeAt DateTime?
+  nudgesToday Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  logs SupplementLog[]
+
+  @@index([deviceId])
+}
+
+model SupplementLog {
+  id           String     @id @default(cuid())
+  supplementId String
+  supplement   Supplement @relation(fields: [supplementId], references: [id], onDelete: Cascade)
+  deviceId     String
+  takenAt      DateTime   @default(now())
+
+  @@index([supplementId, takenAt])
+  @@index([deviceId, takenAt])
+}
+```
+
+- [ ] **Step 2: Push the schema**
+
+Run: `npx prisma db push`
+Expected: `Your database is now in sync with your Prisma schema.`, followed by Prisma Client regenerating.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add prisma/schema.prisma
+git commit -m "Add Supplement and SupplementLog Prisma models"
+```
+
+---
+
+## Task 16: `lib/time.ts` helpers for supplement timing
+
+**Files:**
+- Modify: `lib/time.ts`
+- Create: `lib/time.test.ts`
+
+**Interfaces:**
+- Produces: `export function localTimeToday(tz: string, now: Date, hhmm: string): Date`, `export function isToday(tz: string, now: Date, instant: Date): boolean`. Consumed by Task 17 (`lib/schedule.ts`) and Task 21 (the cron route).
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `lib/time.test.ts`:
+
+```typescript
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { isToday, localTimeToday } from "./time";
+
+test("localTimeToday turns an HH:MM local time into today's UTC instant", () => {
+  const now = new Date("2026-01-01T15:00:00Z");
+  const result = localTimeToday("UTC", now, "09:00");
+  assert.equal(result.toISOString(), "2026-01-01T09:00:00.000Z");
+});
+
+test("localTimeToday respects a non-UTC time zone (Africa/Cairo, UTC+2 in January)", () => {
+  const now = new Date("2026-01-01T15:00:00Z");
+  const result = localTimeToday("Africa/Cairo", now, "09:00");
+  assert.equal(result.toISOString(), "2026-01-01T07:00:00.000Z");
+});
+
+test("isToday is true for an instant on the same local calendar day", () => {
+  const now = new Date("2026-01-01T15:00:00Z");
+  const instant = new Date("2026-01-01T01:00:00Z");
+  assert.equal(isToday("UTC", now, instant), true);
+});
+
+test("isToday is false for an instant from a previous local calendar day", () => {
+  const now = new Date("2026-01-01T15:00:00Z");
+  const instant = new Date("2025-12-31T23:00:00Z");
+  assert.equal(isToday("UTC", now, instant), false);
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npm test` (after adding `lib/time.test.ts` to the script — see Step 4)
+Expected: FAIL — `isToday`/`localTimeToday` not exported from `./time`.
+
+- [ ] **Step 3: Implement the helpers**
+
+Add to `lib/time.ts`, after `inWindow`:
+
+```typescript
+/** The UTC instant of `hhmm` ("HH:MM", 24h) local time, on today's local calendar date in `tz`. */
+export function localTimeToday(tz: string, now: Date, hhmm: string) {
+  const [hour, minute] = hhmm.split(":").map(Number);
+  const midnight = startOfLocalDay(tz, now);
+  return new Date(midnight.getTime() + hour * 60 * 60 * 1000 + minute * 60 * 1000);
+}
+
+/** Whether `instant` falls on the same local calendar day as `now`, in `tz`. */
+export function isToday(tz: string, now: Date, instant: Date) {
+  return instant.getTime() >= startOfLocalDay(tz, now).getTime();
+}
+```
+
+- [ ] **Step 4: Add this file to the test script**
+
+Update `package.json`'s `"test"` script to include it:
+
+```json
+"test": "node --import tsx --test lib/schedule.test.ts lib/history.test.ts lib/time.test.ts",
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npm test`
+Expected: all tests pass, including the 4 new ones in `lib/time.test.ts`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/time.ts lib/time.test.ts package.json
+git commit -m "Add localTimeToday and isToday helpers to lib/time.ts"
+```
+
+---
+
+## Task 17: `dueSupplement` in `lib/schedule.ts`
+
+**Files:**
+- Modify: `lib/schedule.ts`
+- Create: `lib/schedule-supplements.test.ts`
+
+**Interfaces:**
+- Consumes: `localTimeToday` from `./time` (Task 16).
+- Produces: `export type SupplementInput`, `export type SupplementDecision`, `export function dueSupplement(i: SupplementInput): SupplementDecision`, `export function dueSupplements<T extends SupplementInput>(items: T[]): T[]`, `export function supplementMessage(name: string, supplementId: string): { title: string; body: string; url: string; tag: string }`. Consumed by Task 21 (the cron route).
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `lib/schedule-supplements.test.ts`:
+
+```typescript
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { dueSupplement, dueSupplements, supplementMessage } from "./schedule";
+
+const base = {
+  now: new Date("2026-01-01T09:00:00Z"),
+  timezone: "UTC",
+  timeOfDay: "09:00",
+  enabled: true,
+  createdAt: new Date("2025-12-01T00:00:00Z"),
+  takenToday: false,
+  nudgesSentToday: 0,
+  lastNudgeAt: null as Date | null,
+};
+
+test("not yet due", () => {
+  const decision = dueSupplement({ ...base, now: new Date("2026-01-01T08:00:00Z") });
+  assert.deepEqual(decision, { send: false, reason: "not yet due" });
+});
+
+test("due", () => {
+  assert.deepEqual(dueSupplement(base), { send: true });
+});
+
+test("already taken", () => {
+  assert.deepEqual(dueSupplement({ ...base, takenToday: true }), { send: false, reason: "already taken" });
+});
+
+test("disabled", () => {
+  assert.deepEqual(dueSupplement({ ...base, enabled: false }), { send: false, reason: "disabled" });
+});
+
+test("not due before it was added", () => {
+  const decision = dueSupplement({ ...base, createdAt: new Date("2026-01-01T12:00:00Z") });
+  assert.deepEqual(decision, { send: false, reason: "added after today's time" });
+});
+
+test("re-nudge after 1h", () => {
+  const lastNudgeAt = new Date("2026-01-01T09:00:00Z");
+  const now = new Date(lastNudgeAt.getTime() + 60 * 60 * 1000);
+  const decision = dueSupplement({ ...base, now, nudgesSentToday: 1, lastNudgeAt });
+  assert.deepEqual(decision, { send: true });
+});
+
+test("no re-nudge before 1h has passed", () => {
+  const lastNudgeAt = new Date("2026-01-01T09:00:00Z");
+  const now = new Date(lastNudgeAt.getTime() + 30 * 60 * 1000);
+  const decision = dueSupplement({ ...base, now, nudgesSentToday: 1, lastNudgeAt });
+  assert.deepEqual(decision, { send: false, reason: "too soon for re-nudge" });
+});
+
+test("no third nudge", () => {
+  const lastNudgeAt = new Date("2026-01-01T10:00:00Z");
+  const now = new Date(lastNudgeAt.getTime() + 60 * 60 * 1000);
+  const decision = dueSupplement({ ...base, now, nudgesSentToday: 2, lastNudgeAt });
+  assert.deepEqual(decision, { send: false, reason: "already nudged twice today" });
+});
+
+test("time-zone correctness: Africa/Cairo 9am local is due at 7am UTC", () => {
+  const now = new Date("2026-01-01T07:00:00Z");
+  const decision = dueSupplement({ ...base, now, timezone: "Africa/Cairo" });
+  assert.deepEqual(decision, { send: true });
+});
+
+test("time-zone correctness: not yet due in Africa/Cairo", () => {
+  const now = new Date("2026-01-01T06:00:00Z");
+  const decision = dueSupplement({ ...base, now, timezone: "Africa/Cairo" });
+  assert.deepEqual(decision, { send: false, reason: "not yet due" });
+});
+
+test("dueSupplements filters a mixed list down to the ones that are due", () => {
+  const items = [
+    { ...base, id: "a" },
+    { ...base, id: "b", takenToday: true },
+    { ...base, id: "c", now: new Date("2026-01-01T08:00:00Z") },
+  ];
+  assert.deepEqual(dueSupplements(items).map((i) => i.id), ["a"]);
+});
+
+test("supplementMessage builds a title, body, and a per-supplement tag", () => {
+  const msg = supplementMessage("Multivitamin", "supp_123");
+  assert.equal(msg.title, "🦋 Time for your Multivitamin");
+  assert.equal(msg.tag, "vitamin-supp_123");
+  assert.equal(msg.url, "/");
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npm test` (after adding this file to the script — see Step 4)
+Expected: FAIL — none of `dueSupplement`/`dueSupplements`/`supplementMessage` exist yet.
+
+- [ ] **Step 3: Implement in `lib/schedule.ts`**
+
+Update the import line to pull in `localTimeToday`:
+
+```typescript
+import { inWindow, localHour, localTimeToday, startOfLocalDay } from "./time";
+```
+
+Add, after `nextReminderAt`:
+
+```typescript
+export type SupplementInput = {
+  now: Date;
+  timezone: string;
+  timeOfDay: string; // "HH:MM", 24h local time
+  enabled: boolean;
+  createdAt: Date;
+  takenToday: boolean;
+  nudgesSentToday: number; // the caller resets this to 0 once lastNudgeAt is no longer "today"
+  lastNudgeAt: Date | null;
+};
+
+const SUPPLEMENT_GRACE_MS = 2 * 60 * 1000;
+const RENUDGE_AFTER_MS = 60 * 60 * 1000;
+const MAX_NUDGES_PER_DAY = 2;
+
+/** Should a vitamin/supplement nudge go out right now? Up to 2 nudges/day: one at the scheduled time, one re-nudge an hour later if still not taken. */
+export function dueSupplement(i: SupplementInput): Decision {
+  if (!i.enabled) return { send: false, reason: "disabled" };
+  if (i.takenToday) return { send: false, reason: "already taken" };
+  if (i.nudgesSentToday >= MAX_NUDGES_PER_DAY) return { send: false, reason: "already nudged twice today" };
+
+  const dueAt = localTimeToday(i.timezone, i.now, i.timeOfDay);
+  if (i.createdAt.getTime() > dueAt.getTime()) return { send: false, reason: "added after today's time" };
+  if (i.now.getTime() + SUPPLEMENT_GRACE_MS < dueAt.getTime()) return { send: false, reason: "not yet due" };
+
+  if (i.nudgesSentToday === 0) return { send: true };
+
+  const elapsedSinceNudge = i.now.getTime() - (i.lastNudgeAt?.getTime() ?? 0);
+  if (elapsedSinceNudge < RENUDGE_AFTER_MS - SUPPLEMENT_GRACE_MS) {
+    return { send: false, reason: "too soon for re-nudge" };
+  }
+  return { send: true };
+}
+
+/** Filters a list of supplements (each tagged with whatever `id` type the caller uses) down to the ones due right now. */
+export function dueSupplements<T extends SupplementInput>(items: T[]): T[] {
+  return items.filter((item) => dueSupplement(item).send);
+}
+
+/** Notification content for a due supplement. Its own `tag` keeps it from colliding with water reminders or other vitamins. */
+export function supplementMessage(name: string, supplementId: string) {
+  return {
+    title: `🦋 Time for your ${name}`,
+    body: `Don't forget to take your ${name}.`,
+    url: "/",
+    tag: `vitamin-${supplementId}`,
+  };
+}
+```
+
+(`Decision` is the same `{ send: true } | { send: false; reason: string }` type already defined earlier in this file for `shouldRemind` — reused here rather than duplicated.)
+
+- [ ] **Step 4: Add this file to the test script**
+
+```json
+"test": "node --import tsx --test lib/schedule.test.ts lib/schedule-supplements.test.ts lib/history.test.ts lib/time.test.ts",
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npm test`
+Expected: all tests pass, including the 12 new ones in `lib/schedule-supplements.test.ts`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/schedule.ts lib/schedule-supplements.test.ts package.json
+git commit -m "Add dueSupplement/dueSupplements/supplementMessage to lib/schedule.ts"
+```
+
+---
+
+## Task 18: Per-notification tags in `lib/push.ts` and `public/sw.js`
+
+**Files:**
+- Modify: `lib/push.ts`
+- Modify: `public/sw.js`
+- Modify: `lib/schedule.ts` (one-line addition to `reminderMessage`'s return value)
+
+**Interfaces:**
+- Produces: `PushPayload` gains an optional `tag?: string`. Consumed by Task 21 (the cron route sends `supplementMessage(...)`'s payload, which includes a `tag`).
+
+- [ ] **Step 1: Widen `PushPayload` in `lib/push.ts`**
+
+Replace:
+
+```typescript
+export type PushPayload = { title: string; body: string; url?: string };
+```
+
+with:
+
+```typescript
+export type PushPayload = { title: string; body: string; url?: string; tag?: string };
+```
+
+(No other change needed in this file — `sendNotification(..., JSON.stringify(payload), ...)` already serializes whatever's on `payload`, `tag` included.)
+
+- [ ] **Step 2: Make the service worker use the tag from the payload**
+
+In `public/sw.js`, inside the `push` event listener, replace:
+
+```javascript
+  const title = data.title || "Drink water 💧";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "Time for a glass of water.",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: "water-reminder",
+      renotify: true,
+      data: { url: data.url || "/" },
+    })
+  );
+```
+
+with:
+
+```javascript
+  const title = data.title || "Drink water 💧";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "Time for a glass of water.",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: data.tag || "water-reminder",
+      renotify: true,
+      data: { url: data.url || "/" },
+    })
+  );
+```
+
+- [ ] **Step 3: Make the water reminder's own tag explicit**
+
+In `lib/schedule.ts`, `reminderMessage` currently returns:
+
+```typescript
+  return {
+    title: "Drink water 💧",
+    body: `${line} ${todayMl.toLocaleString("en-US")} / ${goalMl.toLocaleString("en-US")} ml today, ${left.toLocaleString("en-US")} ml to go.`,
+    url: "/?from=reminder",
+  };
+```
+
+Add a `tag`:
+
+```typescript
+  return {
+    title: "Drink water 💧",
+    body: `${line} ${todayMl.toLocaleString("en-US")} / ${goalMl.toLocaleString("en-US")} ml today, ${left.toLocaleString("en-US")} ml to go.`,
+    url: "/?from=reminder",
+    tag: "water-reminder",
+  };
+```
+
+(This is now redundant with the service worker's `"water-reminder"` fallback, but being explicit here means the water reminder's tag lives next to the vitamin tag's definition in the same file, instead of being an implicit default buried in `sw.js`.)
+
+- [ ] **Step 4: Manually verify**
+
+Run: `npm run build` (type-check only — there's no local push-notification testing without a subscribed device; this step just confirms nothing broke). Once deployed, triggering both a water reminder and a due vitamin for the same device should produce two separate notifications (different tags), not one replacing the other.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/push.ts public/sw.js lib/schedule.ts
+git commit -m "Support per-notification tags so vitamin and water pushes don't collide"
+```
+
+---
+
+## Task 19: Supplements in `deviceState()` and `State`
+
+**Files:**
+- Modify: `lib/types.ts`
+- Modify: `lib/device.ts`
+
+**Interfaces:**
+- Produces: `export type SupplementView = { id: string; name: string; timeOfDay: string; enabled: boolean; takenToday: boolean }`, `State.supplements: SupplementView[]`. Consumed by Task 20 (the supplement routes), Task 22 (home screen checklist), Task 23 (Settings management UI).
+
+- [ ] **Step 1: Add the type to `lib/types.ts`**
+
+```typescript
+export type SupplementView = {
+  id: string;
+  name: string;
+  timeOfDay: string;
+  enabled: boolean;
+  takenToday: boolean;
+};
+```
+
+Add `supplements: SupplementView[];` as a new field on `State`:
+
+```typescript
+export type State = {
+  settings: Settings;
+  todayMl: number;
+  logs: LogEntry[];
+  subscribed: boolean;
+  nextReminderAt: string | null;
+  supplements: SupplementView[];
+};
+```
+
+- [ ] **Step 2: Compute it in `deviceState()`**
+
+In `lib/device.ts`, add a helper above `deviceState`:
+
+```typescript
+async function supplementsToday(deviceId: string, tz: string): Promise<SupplementView[]> {
+  const supplements = await prisma.supplement.findMany({ where: { deviceId }, orderBy: { timeOfDay: "asc" } });
+  const todayStart = startOfLocalDay(tz);
+  const takenIds = new Set(
+    (
+      await prisma.supplementLog.findMany({
+        where: { deviceId, takenAt: { gte: todayStart } },
+        select: { supplementId: true },
+      })
+    ).map((l) => l.supplementId)
+  );
+  return supplements.map((s) => ({
+    id: s.id,
+    name: s.name,
+    timeOfDay: s.timeOfDay,
+    enabled: s.enabled,
+    takenToday: takenIds.has(s.id),
+  }));
+}
+```
+
+Add `import type { SupplementView } from "./types";` at the top of `lib/device.ts`.
+
+In `deviceState()`, add `supplementsToday(id, device.timezone)` to the existing `Promise.all`, and add `supplements` to the returned object:
+
+```typescript
+export async function deviceState(id: string) {
+  const device = await getOrCreateDevice(id);
+  const now = new Date();
+  const [logs, subCount, lastLog, supplements] = await Promise.all([
+    todayLogs(id, device.timezone),
+    prisma.pushSubscription.count({ where: { deviceId: id } }),
+    prisma.waterLog.findFirst({ where: { deviceId: id }, orderBy: { createdAt: "desc" } }),
+    supplementsToday(id, device.timezone),
+  ]);
+  const todayMl = logs.reduce((s, l) => s + l.amountMl, 0);
+  const next = nextReminderAt({
+    now,
+    timezone: device.timezone,
+    intervalMin: device.intervalMin,
+    startHour: device.startHour,
+    endHour: device.endHour,
+    goalMl: device.goalMl,
+    enabled: device.enabled,
+    todayMl,
+    lastSentAt: device.lastSentAt,
+    lastLogAt: lastLog?.createdAt ?? null,
+  });
+
+  return {
+    settings: {
+      timezone: device.timezone,
+      intervalMin: device.intervalMin,
+      startHour: device.startHour,
+      endHour: device.endHour,
+      goalMl: device.goalMl,
+      glassMl: device.glassMl,
+      enabled: device.enabled,
+    },
+    todayMl,
+    logs: logs.map((l) => ({ id: l.id, amountMl: l.amountMl, at: l.createdAt.toISOString() })),
+    subscribed: subCount > 0,
+    nextReminderAt: next ? next.toISOString() : null,
+    supplements,
+  };
+}
+```
+
+- [ ] **Step 3: Verify the type-check**
+
+Run: `npx tsc --noEmit`
+Expected: no errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add lib/types.ts lib/device.ts
+git commit -m "Include today's supplement checklist in deviceState()"
+```
+
+---
+
+## Task 20: Supplement CRUD and taken/undo routes
+
+**Files:**
+- Create: `app/api/supplements/route.ts`
+- Create: `app/api/supplements/log/route.ts`
+
+**Interfaces:**
+- Consumes: `bad`, `getOrCreateDevice`, `validDeviceId`, `deviceState` from `@/lib/device`; `prisma` from `@/lib/db`.
+- Produces: `POST`/`PUT`/`DELETE /api/supplements`, `POST`/`DELETE /api/supplements/log` — all return the full `deviceState()` JSON, matching every other mutation route in this app. Consumed by Task 22 and Task 23.
+
+- [ ] **Step 1: Create `app/api/supplements/route.ts`**
+
+```typescript
+import { prisma } from "@/lib/db";
+import { bad, deviceState, getOrCreateDevice, validDeviceId } from "@/lib/device";
+
+export const dynamic = "force-dynamic";
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Body: { deviceId, name, timeOfDay } — adds a new vitamin/supplement. */
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !validDeviceId(body.deviceId)) return bad("invalid deviceId");
+  const name = typeof body.name === "string" ? body.name.trim().slice(0, 100) : "";
+  if (!name) return bad("name is required");
+  if (typeof body.timeOfDay !== "string" || !TIME_RE.test(body.timeOfDay)) return bad("timeOfDay must be HH:MM");
+
+  await getOrCreateDevice(body.deviceId);
+  await prisma.supplement.create({ data: { deviceId: body.deviceId, name, timeOfDay: body.timeOfDay } });
+  return Response.json(await deviceState(body.deviceId));
+}
+
+/** Body: { deviceId, id, name?, timeOfDay?, enabled? } — edits an existing vitamin/supplement. */
+export async function PUT(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !validDeviceId(body.deviceId) || typeof body.id !== "string") return bad("invalid deviceId or id");
+
+  const data: Record<string, unknown> = {};
+  if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim().slice(0, 100);
+  if (typeof body.timeOfDay === "string" && TIME_RE.test(body.timeOfDay)) data.timeOfDay = body.timeOfDay;
+  if (typeof body.enabled === "boolean") data.enabled = body.enabled;
+
+  await prisma.supplement.updateMany({ where: { id: body.id, deviceId: body.deviceId }, data });
+  return Response.json(await deviceState(body.deviceId));
+}
+
+/** Body: { deviceId, id } — removes a vitamin/supplement (and its log history, via cascade). */
+export async function DELETE(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !validDeviceId(body.deviceId) || typeof body.id !== "string") return bad("invalid deviceId or id");
+
+  await prisma.supplement.deleteMany({ where: { id: body.id, deviceId: body.deviceId } });
+  return Response.json(await deviceState(body.deviceId));
+}
+```
+
+(`updateMany`/`deleteMany` scoped by `{ id, deviceId }` together — rather than `update`/`delete` by `id` alone — so one device can never edit or delete another device's supplement row, even though `Supplement.id` isn't namespaced by device.)
+
+- [ ] **Step 2: Create `app/api/supplements/log/route.ts`**
+
+```typescript
+import { prisma } from "@/lib/db";
+import { bad, deviceState, validDeviceId } from "@/lib/device";
+import { startOfLocalDay } from "@/lib/time";
+
+export const dynamic = "force-dynamic";
+
+/** Body: { deviceId, supplementId } — marks a vitamin taken right now. */
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !validDeviceId(body.deviceId) || typeof body.supplementId !== "string") {
+    return bad("invalid deviceId or supplementId");
+  }
+  const supplement = await prisma.supplement.findFirst({
+    where: { id: body.supplementId, deviceId: body.deviceId },
+  });
+  if (!supplement) return bad("supplement not found", 404);
+
+  await prisma.supplementLog.create({ data: { supplementId: supplement.id, deviceId: body.deviceId } });
+  return Response.json(await deviceState(body.deviceId));
+}
+
+/** Body: { deviceId, supplementId } — undoes today's most recent "taken" mark for this vitamin. */
+export async function DELETE(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !validDeviceId(body.deviceId) || typeof body.supplementId !== "string") {
+    return bad("invalid deviceId or supplementId");
+  }
+  const device = await prisma.device.findUnique({ where: { id: body.deviceId } });
+  if (!device) return bad("device not found", 404);
+
+  const latest = await prisma.supplementLog.findFirst({
+    where: { supplementId: body.supplementId, deviceId: body.deviceId, takenAt: { gte: startOfLocalDay(device.timezone) } },
+    orderBy: { takenAt: "desc" },
+  });
+  if (latest) await prisma.supplementLog.delete({ where: { id: latest.id } });
+  return Response.json(await deviceState(body.deviceId));
+}
+```
+
+- [ ] **Step 3: Manually verify against a running dev server**
+
+Run: `npm run dev`, then:
+```bash
+curl -s -X POST http://localhost:3000/api/supplements -H "Content-Type: application/json" -d '{"deviceId":"test-device-123","name":"Multivitamin","timeOfDay":"09:00"}'
+```
+Expected: a 200 response whose `supplements` array contains the new entry with `takenToday: false`. Then:
+```bash
+curl -s -X POST http://localhost:3000/api/supplements/log -H "Content-Type: application/json" -d '{"deviceId":"test-device-123","supplementId":"<id from the previous response>"}'
+```
+Expected: `takenToday: true` for that entry in the response.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add app/api/supplements
+git commit -m "Add supplement CRUD and taken/undo routes"
+```
+
+---
+
+## Task 21: Vitamin nudges in the cron job
+
+**Files:**
+- Modify: `app/api/cron/remind/route.ts`
+
+**Interfaces:**
+- Consumes: `dueSupplements`, `supplementMessage` from `@/lib/schedule` (Task 17); `isToday` from `@/lib/time` (Task 16).
+
+- [ ] **Step 1: Extend the device query to include supplements**
+
+Replace the `devices` query:
+
+```typescript
+  const devices = await prisma.device.findMany({
+    where: { enabled: true, subscriptions: { some: {} } },
+    include: { logs: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+```
+
+with (dropping the `enabled: true` filter at the top level, since a device with water reminders paused can still have active vitamin reminders — `enabled` is checked per-concern below instead):
+
+```typescript
+  const devices = await prisma.device.findMany({
+    where: { subscriptions: { some: {} } },
+    include: {
+      logs: { orderBy: { createdAt: "desc" }, take: 1 },
+      supplements: { where: { enabled: true } },
+    },
+  });
+```
+
+- [ ] **Step 2: Keep the water-reminder branch gated on the device's own `enabled`, then add the supplement branch**
+
+The existing per-device loop currently starts with computing `todayMl` and calling `shouldRemind`. Wrap that in an `if (d.enabled)` check (since the `enabled: true` filter was removed from the query above), and add supplement handling after it:
+
+```typescript
+  const results: { device: string; result: string }[] = [];
+  for (const d of devices) {
+    if (d.enabled) {
+      const agg = await prisma.waterLog.aggregate({
+        where: { deviceId: d.id, createdAt: { gte: startOfLocalDay(d.timezone, now) } },
+        _sum: { amountMl: true },
+      });
+      const todayMl = agg._sum.amountMl ?? 0;
+
+      const decision = shouldRemind({
+        now,
+        timezone: d.timezone,
+        intervalMin: d.intervalMin,
+        startHour: d.startHour,
+        endHour: d.endHour,
+        goalMl: d.goalMl,
+        enabled: d.enabled,
+        todayMl,
+        lastSentAt: d.lastSentAt,
+        lastLogAt: d.logs[0]?.createdAt ?? null,
+      });
+
+      if (!decision.send) {
+        results.push({ device: d.id.slice(0, 8), result: `water: ${decision.reason}` });
+      } else {
+        const sent = await sendToDevice(d.id, reminderMessage(todayMl, d.goalMl, now));
+        if (sent) await prisma.device.update({ where: { id: d.id }, data: { lastSentAt: now } });
+        results.push({ device: d.id.slice(0, 8), result: `water: sent to ${sent}` });
+      }
+    }
+
+    for (const supp of d.supplements) {
+      const takenToday = await prisma.supplementLog.findFirst({
+        where: { supplementId: supp.id, takenAt: { gte: startOfLocalDay(d.timezone, now) } },
+      });
+      const nudgesSentToday =
+        supp.lastNudgeAt && isToday(d.timezone, now, supp.lastNudgeAt) ? supp.nudgesToday : 0;
+
+      const decision = dueSupplement({
+        now,
+        timezone: d.timezone,
+        timeOfDay: supp.timeOfDay,
+        enabled: supp.enabled,
+        createdAt: supp.createdAt,
+        takenToday: Boolean(takenToday),
+        nudgesSentToday,
+        lastNudgeAt: supp.lastNudgeAt,
+      });
+
+      if (!decision.send) {
+        results.push({ device: d.id.slice(0, 8), result: `${supp.name}: ${decision.reason}` });
+        continue;
+      }
+
+      const sent = await sendToDevice(d.id, supplementMessage(supp.name, supp.id));
+      if (sent) {
+        await prisma.supplement.update({
+          where: { id: supp.id },
+          data: { lastNudgeAt: now, nudgesToday: nudgesSentToday + 1 },
+        });
+      }
+      results.push({ device: d.id.slice(0, 8), result: `${supp.name}: sent to ${sent}` });
+    }
+  }
+```
+
+(Note this replaces the body of the existing `for (const d of devices) { ... }` loop entirely — the water-reminder logic inside the `if (d.enabled)` block is the same as before, just re-indented one level and with its `results.push` messages prefixed `water:` to distinguish them from supplement entries in the same response.)
+
+Update the imports at the top of the file:
+
+```typescript
+import { prisma } from "@/lib/db";
+import { sendToDevice } from "@/lib/push";
+import { dueSupplement, reminderMessage, shouldRemind, supplementMessage } from "@/lib/schedule";
+import { isToday, startOfLocalDay } from "@/lib/time";
+```
+
+- [ ] **Step 3: Manually verify**
+
+Run: `npm run build` to confirm it type-checks. Then, against a device with an active subscription and a supplement whose `timeOfDay` is a couple of minutes in the past, hit `/api/cron/remind?key=<CRON_SECRET>` and confirm the JSON response includes a `"<name>: sent to 1"` entry, and that a second immediate call shows `"<name>: too soon for re-nudge"` (not due again until the 1-hour window).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add app/api/cron/remind/route.ts
+git commit -m "Send vitamin nudges from the cron job, independent of water reminders"
+```
+
+---
+
+## Task 22: "Vitamins today" checklist on the home screen
+
+**Files:**
+- Modify: `app/page.tsx`
+
+**Interfaces:**
+- Consumes: `state.supplements` (Task 19), `commit` (Task 7).
+
+- [ ] **Step 1: Add the toggle handler**
+
+Add after the `drink` callback:
+
+```typescript
+const toggleSupplement = useCallback(
+  async (supplementId: string, takenToday: boolean) => {
+    if (!deviceId || !state) return;
+    const previous = state;
+    setState({
+      ...state,
+      supplements: state.supplements.map((v) => (v.id === supplementId ? { ...v, takenToday: !takenToday } : v)),
+    });
+    try {
+      commit(
+        takenToday
+          ? await api("/api/supplements/log", "DELETE", { deviceId, supplementId })
+          : await api("/api/supplements/log", "POST", { deviceId, supplementId })
+      );
+    } catch (e) {
+      setState(previous);
+      flash((e as Error).message);
+    }
+  },
+  [deviceId, state]
+);
+```
+
+- [ ] **Step 2: Add the section**
+
+After the `{/* Today */}` section's closing `</section>`, add:
+
+```tsx
+{/* Vitamins */}
+{state.supplements.length > 0 && (
+  <section className="mt-6 rounded-3xl bg-deep p-5">
+    <div className="flex items-center justify-between">
+      <h2 className="font-semibold">Vitamins today</h2>
+      <span className="text-sm text-foam/60">
+        {state.supplements.filter((v) => v.takenToday).length} of {state.supplements.length} taken
+      </span>
+    </div>
+    <ul className="mt-3 space-y-2">
+      {state.supplements.map((v) => (
+        <li key={v.id}>
+          <button
+            onClick={() => toggleSupplement(v.id, v.takenToday)}
+            className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
+              v.takenToday ? "bg-water/15 text-foam" : "bg-ink text-foam/80"
+            }`}
+          >
+            <span>{v.takenToday ? "✅" : "🦋"} {v.name}</span>
+            <span className="text-foam/50">{v.timeOfDay}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  </section>
+)}
+```
+
+- [ ] **Step 3: Manually verify**
+
+Run: `npm run dev`, add a vitamin via Settings (Task 23 — do this step after that task lands), then tap it on the home screen — confirm it flips to ✅ instantly (optimistic), the "N of M taken" count updates, and tapping again un-checks it. With the network offline, confirm a tap reverts after the request fails and shows a toast.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add app/page.tsx
+git commit -m "Add Vitamins today checklist with optimistic toggle"
+```
+
+---
+
+## Task 23: Settings UI to manage vitamins
+
+**Files:**
+- Modify: `app/page.tsx`
+
+**Interfaces:**
+- Consumes: `app/api/supplements` (Task 20), `commit` (Task 7).
+
+- [ ] **Step 1: Add state and handlers**
+
+Add alongside `customMl`:
+
+```typescript
+const [newSuppName, setNewSuppName] = useState("");
+const [newSuppTime, setNewSuppTime] = useState("09:00");
+```
+
+Add after `toggleSupplement`:
+
+```typescript
+const addSupplement = async () => {
+  if (!newSuppName.trim()) return;
+  try {
+    commit(await api("/api/supplements", "POST", { deviceId, name: newSuppName.trim(), timeOfDay: newSuppTime }));
+    setNewSuppName("");
+  } catch (e) {
+    flash((e as Error).message);
+  }
+};
+
+const updateSupplement = async (id: string, patch: { name?: string; timeOfDay?: string; enabled?: boolean }) => {
+  try {
+    commit(await api("/api/supplements", "PUT", { deviceId, id, ...patch }));
+  } catch (e) {
+    flash((e as Error).message);
+  }
+};
+
+const deleteSupplement = async (id: string) => {
+  try {
+    commit(await api("/api/supplements", "DELETE", { deviceId, id }));
+  } catch (e) {
+    flash((e as Error).message);
+  }
+};
+```
+
+- [ ] **Step 2: Add the management UI inside the `{showSettings && (...)}` section**
+
+Right before the closing `<p className="text-foam/50">Time zone: {s.timezone}</p>` line, add:
+
+```tsx
+<div className="space-y-2 border-t border-foam/10 pt-4">
+  <p className="text-foam/80">Vitamins</p>
+  {state.supplements.map((v) => (
+    <div key={v.id} className="flex items-center gap-2">
+      <input
+        defaultValue={v.name}
+        onBlur={(e) => e.target.value.trim() && e.target.value !== v.name && updateSupplement(v.id, { name: e.target.value.trim() })}
+        className="sel min-w-0 flex-1"
+      />
+      <input
+        type="time"
+        defaultValue={v.timeOfDay}
+        onBlur={(e) => e.target.value !== v.timeOfDay && updateSupplement(v.id, { timeOfDay: e.target.value })}
+        className="sel"
+      />
+      <button onClick={() => deleteSupplement(v.id)} className="text-water active:opacity-60">
+        Delete
+      </button>
+    </div>
+  ))}
+  <div className="flex items-center gap-2">
+    <input
+      placeholder="Vitamin name"
+      value={newSuppName}
+      onChange={(e) => setNewSuppName(e.target.value)}
+      className="sel min-w-0 flex-1"
+    />
+    <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel" />
+    <button onClick={addSupplement} className="rounded-xl bg-ink px-3 py-2 font-medium active:scale-95">
+      Add
+    </button>
+  </div>
+</div>
+```
+
+(`defaultValue` + `onBlur` rather than a fully controlled `value`/`onChange` keeps every keystroke from round-tripping to the server — the edit only saves once the field loses focus, matching how the rest of Settings behaves on discrete choices rather than free text.)
+
+- [ ] **Step 3: Manually verify**
+
+Run: `npm run dev`, open Settings, add "Multivitamin" at a time a few minutes from now, confirm it appears both in Settings and in the home screen's "Vitamins today" checklist, edit its name/time by blurring the field after changing it, and delete it — confirm each action updates the list without a page reload.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add app/page.tsx
+git commit -m "Add Settings UI to manage vitamins"
+```
+
+---
+
+## Task 24: New blue butterfly app icon
+
+**Files:**
+- Create: `public/butterfly-icon-source.svg` (kept as the editable source, not referenced by the app)
+- Modify (binary): `public/icon-192.png`, `public/icon-512.png`, `public/apple-touch-icon.png`
+
+**Interfaces:** none (static assets only — `app/manifest.ts` and `app/layout.tsx` already reference these exact file paths, so no code changes needed).
+
+- [ ] **Step 1: Author the SVG**
+
+Create `public/butterfly-icon-source.svg` — an original, hand-drawn geometric butterfly (not traced from any emoji font), using the same palette as Task 12, with a solid background so it works as a maskable icon:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" fill="#0a1430"/>
+  <ellipse cx="50" cy="50" rx="2.5" ry="18" fill="#eaf2ff"/>
+  <path d="M48 36 Q45 29 41 25" stroke="#eaf2ff" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M52 36 Q55 29 59 25" stroke="#eaf2ff" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M48 42 C 34 22, 16 24, 18 40 C 19 50, 34 51, 48 46 Z" fill="#4fa8ff"/>
+  <path d="M48 50 C 37 57, 25 65, 28 74 C 31 81, 42 75, 48 60 Z" fill="#2f6fe0"/>
+  <path d="M52 42 C 66 22, 84 24, 82 40 C 81 50, 66 51, 52 46 Z" fill="#4fa8ff"/>
+  <path d="M52 50 C 63 57, 75 65, 72 74 C 69 81, 58 75, 52 60 Z" fill="#2f6fe0"/>
+  <circle cx="29" cy="34" r="3" fill="#eaf2ff" opacity="0.8"/>
+  <circle cx="71" cy="34" r="3" fill="#eaf2ff" opacity="0.8"/>
+</svg>
+```
+
+- [ ] **Step 2: Rasterize to PNGs with `sharp` (already present, no new dependency)**
+
+Run this ad hoc from the project root — it's a one-time asset generation script, not part of the app, so it isn't saved anywhere permanent:
+
+```bash
+node -e "
+const sharp = require('sharp');
+const fs = require('fs');
+const svg = fs.readFileSync('public/butterfly-icon-source.svg');
+Promise.all([
+  sharp(svg).resize(192, 192).png().toFile('public/icon-192.png'),
+  sharp(svg).resize(512, 512).png().toFile('public/icon-512.png'),
+  sharp(svg).resize(180, 180).png().toFile('public/apple-touch-icon.png'),
+]).then(() => console.log('icons written')).catch((e) => { console.error(e); process.exit(1); });
+"
+```
+
+Expected output: `icons written`.
+
+- [ ] **Step 3: Manually verify**
+
+Open each of the three PNGs (e.g. in the IDE's image preview, or `start public/icon-512.png` on Windows) and confirm the butterfly renders cleanly at every size, especially the smallest (192px) — no illegible fine detail. Run `npm run dev` and check the browser tab's favicon and the PWA install prompt's icon (Chrome devtools → Application → Manifest) show the new butterfly.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add public/butterfly-icon-source.svg public/icon-192.png public/icon-512.png public/apple-touch-icon.png
+git commit -m "Replace the app icon with an original blue butterfly design"
+```
+
+---
+
+## Task 25: Butterfly emoji placements and manifest colors
+
+**Files:**
+- Modify: `app/page.tsx` (header, empty states)
+- Modify: `app/manifest.ts`
+
+**Interfaces:** none new — copy and metadata changes only.
+
+- [ ] **Step 1: Add 🦋 to the header**
+
+In `app/page.tsx`, change:
+
+```tsx
+<h1 className="text-2xl font-bold tracking-tight">Sip</h1>
+```
+
+to:
+
+```tsx
+<h1 className="text-2xl font-bold tracking-tight">Sip 🦋</h1>
+```
+
+- [ ] **Step 2: Add 🦋 to the empty states**
+
+Change the "Nothing logged yet" line:
+
+```tsx
+<p className="mt-2 text-sm text-foam/50">Nothing logged yet.</p>
+```
+
+to:
+
+```tsx
+<p className="mt-2 text-sm text-foam/50">🦋 Nothing logged yet.</p>
+```
+
+And the no-streak line in `app/history-chart.tsx` (from Task 11):
+
+```tsx
+{streak > 0 ? `🔥 ${streak} day${streak === 1 ? "" : "s"} hitting your goal` : "Hit your goal today to start a streak."}
+```
+
+to:
+
+```tsx
+{streak > 0 ? `🔥 ${streak} day${streak === 1 ? "" : "s"} hitting your goal` : "🦋 Hit your goal today to start a streak."}
+```
+
+- [ ] **Step 3: Sync `app/manifest.ts` to the butterfly palette**
+
+Replace:
+
+```typescript
+    background_color: "#0b1e33",
+    theme_color: "#0b1e33",
+```
+
+with:
+
+```typescript
+    background_color: "#0a1430",
+    theme_color: "#0a1430",
+```
+
+(Matching the dark-theme `--color-ink` value from Task 12 exactly — this is the color shown behind the icon during PWA launch, before the page itself paints.)
+
+- [ ] **Step 4: Manually verify**
+
+Run: `npm run dev`, confirm "Sip 🦋" shows in the header, the empty-logs and empty-streak states show the 🦋 copy, and (via devtools → Application → Manifest) the manifest's `background_color`/`theme_color` read `#0a1430`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app/page.tsx app/history-chart.tsx app/manifest.ts
+git commit -m "Add butterfly emoji placements and sync manifest colors to the new palette"
+```
+
+---
+
+## Task 26: Contrast check across both themes
+
+**Files:** none (verification only — fixes, if any are found, land as a follow-up edit to `app/globals.css` within this same task).
+
+- [ ] **Step 1: Check every blue-on-blue text/background pairing**
+
+Run: `npm run dev`. Using the browser's contrast checker (Chrome devtools → inspect an element → the color swatch on any `color`/`background-color` line shows a contrast ratio against its background) or a standalone checker with the hex values from Task 12, verify each of these pairs is at least 4.5:1 for normal text (3:1 is acceptable for large/bold text like headings and the big ml total):
+
+- Dark: `--color-foam` (#eaf2ff) text on `--color-ink` (#0a1430) background
+- Dark: `--color-foam` (#eaf2ff) text on `--color-deep` (#142a5e) background
+- Dark: `--color-ink` (#0a1430) text on `--color-water` (#4fa8ff) background (the "+1 glass" and "Try again" buttons)
+- Light: `--color-foam` (#0a1430) text on `--color-ink` (#eef4ff) background
+- Light: `--color-foam` (#0a1430) text on `--color-deep` (#d7e6ff) background
+- Light: `--color-ink` (#eef4ff) text on `--color-water` (#2f6fe0) background
+
+- [ ] **Step 2: Fix any pairing that falls short**
+
+If any ratio is below the target, adjust that specific CSS variable's value in `app/globals.css` (from Task 12) by a few percent lightness/darkness — keep the same hue family so it still reads as "blue butterfly," just shift until it passes. Re-check after each change.
+
+- [ ] **Step 3: Re-run the full verification**
+
+Run: `npm run build` to confirm the color change (if any) didn't break anything else.
+
+- [ ] **Step 4: Commit (only if Step 2 required a change)**
+
+```bash
+git add app/globals.css
+git commit -m "Adjust palette for contrast after manual check"
+```
+
+---
+
+## Task 27: Final verification and push (everything)
+
+**Files:** none (verification only).
+
+- [ ] **Step 1: Run the full test suite**
+
+Run: `npm test`
+Expected: all tests pass across `lib/schedule.test.ts`, `lib/schedule-supplements.test.ts`, `lib/history.test.ts`, and `lib/time.test.ts`.
+
+- [ ] **Step 2: Run the production build**
+
+Run: `npm run build`
+Expected: completes with no type errors, listing `/api/history`, `/api/supplements`, and `/api/supplements/log` among the routes.
+
+- [ ] **Step 3: Full smoke test**
+
+Run: `npm start`, open `http://localhost:3000`, and walk through: initial load (butterfly icon, "Sip 🦋" header), logging a drink three ways, toggling History, adding/editing/deleting a vitamin in Settings, checking it off on the home screen, toggling light/dark via devtools, and reaching the daily goal to see the butterfly celebration. Confirm no console errors.
+
+- [ ] **Step 4: Push everything to origin main**
+
+```bash
+git push origin main
+```
+
+- [ ] **Step 5: Tell the user what to do in Vercel/cron-job.org**
+
+Since this round adds new environment-free functionality (no new env vars needed) but does add two new routes the external cron job should know about implicitly (it already hits `/api/cron/remind`, which now also handles vitamins — no change needed to the cron-job.org configuration itself), the only follow-up for the user is: re-add the app to their iPhone Home Screen if they want the new icon to show (iOS caches the Home Screen icon at install time and won't pick up a changed one without removing and re-adding it).
