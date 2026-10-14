@@ -51,20 +51,24 @@ const timeLabel = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const ml = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n % 1000 ? 2 : 1).replace(/0$/, "")} L` : `${n} ml`);
 
-async function api(path: string, method = "GET", body?: unknown) {
+async function api(path: string, method = "GET", body?: unknown, signal?: AbortSignal) {
   const res = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`);
   return json;
 }
 
+const LOAD_TIMEOUT_MS = 10_000;
+
 export default function Home() {
   const [deviceId, setDeviceId] = useState("");
   const [state, setState] = useState<State | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [push, setPush] = useState<PushStatus>("loading");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
@@ -77,27 +81,38 @@ export default function Home() {
   };
 
   // Load state, register the service worker, and work out where push setup stands.
-  useEffect(() => {
+  const loadState = useCallback(async () => {
+    setLoadError("");
     const id = getDeviceId();
     setDeviceId(id);
     setFromReminder(new URLSearchParams(location.search).get("from") === "reminder");
 
-    api(`/api/state?deviceId=${id}`)
-      .then(async (s: State) => {
-        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (tz && tz !== s.settings.timezone) s = await api("/api/settings", "PUT", { deviceId: id, timezone: tz });
-        setState(s);
-        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-          setPush(isIOS() && !isStandalone() ? "install" : "unsupported");
-          return;
-        }
-        await navigator.serviceWorker.register("/sw.js");
-        if (Notification.permission === "denied") setPush("denied");
-        else if (Notification.permission === "granted" && s.subscribed) setPush("on");
-        else setPush("ask");
-      })
-      .catch((e) => flash(e.message));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
+    try {
+      let s: State = await api(`/api/state?deviceId=${id}`, "GET", undefined, controller.signal);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && tz !== s.settings.timezone) s = await api("/api/settings", "PUT", { deviceId: id, timezone: tz });
+      setState(s);
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setPush(isIOS() && !isStandalone() ? "install" : "unsupported");
+        return;
+      }
+      await navigator.serviceWorker.register("/sw.js");
+      if (Notification.permission === "denied") setPush("denied");
+      else if (Notification.permission === "granted" && s.subscribed) setPush("on");
+      else setPush("ask");
+    } catch (e) {
+      const err = e as Error;
+      setLoadError(err.name === "AbortError" ? "Taking too long to load. Check your connection and try again." : err.message);
+    } finally {
+      clearTimeout(timer);
+    }
   }, []);
+
+  useEffect(() => {
+    loadState();
+  }, [loadState]);
 
   const turnOnReminders = async () => {
     setBusy(true);
@@ -168,6 +183,23 @@ export default function Home() {
     () => (state ? Math.min(state.todayMl / state.settings.goalMl, 1) : 0),
     [state]
   );
+
+  if (loadError && !state) {
+    return (
+      <main className="grid min-h-dvh place-items-center px-6 text-center">
+        <div>
+          <p className="text-lg font-semibold text-foam">Couldn’t load Sip</p>
+          <p className="mt-2 text-sm text-foam/60">{loadError}</p>
+          <button
+            onClick={loadState}
+            className="mt-5 rounded-full bg-water px-6 py-2.5 font-semibold text-ink active:scale-95"
+          >
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   if (!state) {
     return (
