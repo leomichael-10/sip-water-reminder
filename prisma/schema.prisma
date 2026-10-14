@@ -72,3 +72,9 @@ model SupplementLog {
   @@index([supplementId, takenAt])
   @@index([deviceId, takenAt])
 }
+
+/// Single-row table: system-wide facts, not tied to any one device.
+model AppMeta {
+  id         String    @id @default("singleton")
+  lastCronAt DateTime?
+}

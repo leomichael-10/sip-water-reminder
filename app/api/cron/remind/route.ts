@@ -22,6 +22,15 @@ export async function GET(req: Request) {
   }
 
   const now = new Date();
+  // Record that the scheduler fired, regardless of what happens below — this
+  // is the heartbeat the UI uses to tell "cron is just between ticks" apart
+  // from "cron has actually stopped running".
+  await prisma.appMeta.upsert({
+    where: { id: "singleton" },
+    update: { lastCronAt: now },
+    create: { id: "singleton", lastCronAt: now },
+  });
+
   const devices = await prisma.device.findMany({
     where: { subscriptions: { some: {} } },
     include: {

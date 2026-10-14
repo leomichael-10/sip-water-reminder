@@ -24,6 +24,7 @@ export type State = {
   logs: LogEntry[];
   subscribed: boolean;
   nextReminderAt: string | null;
+  lastCronAt: string | null;
   supplements: SupplementView[];
 };
 

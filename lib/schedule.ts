@@ -1,4 +1,4 @@
-import { inWindow, localHour, localTimeToday, startOfLocalDay } from "./time";
+import { inWindow, localClockLabel, localHour, localTimeToday, startOfLocalDay } from "./time";
 
 export type ScheduleInput = {
   now: Date;
@@ -127,5 +127,48 @@ export function supplementMessage(name: string, supplementId: string) {
     body: `Don't forget to take your ${name}.`,
     url: "/",
     tag: `vitamin-${supplementId}`,
+  };
+}
+
+export type ReminderStatusInput = {
+  now: Date;
+  enabled: boolean;
+  timezone: string;
+  startHour: number;
+  endHour: number;
+  todayMl: number;
+  goalMl: number;
+  nextReminderAt: Date | null;
+  lastCronAt: Date | null;
+};
+
+export type ReminderStatus = { text: string; warning: boolean };
+
+const CRON_STALE_MS = 20 * 60 * 1000;
+
+/**
+ * The text to show on the Reminders card for the water reminder, re-evaluated
+ * client-side against a live `now` — never a stale, already-past prediction.
+ */
+export function reminderStatusText(i: ReminderStatusInput): ReminderStatus {
+  if (!i.enabled) return { text: "Paused.", warning: false };
+  if (i.todayMl >= i.goalMl) return { text: "Goal reached. No more reminders today 🦋", warning: false };
+  if (!i.nextReminderAt) return { text: "Paused.", warning: false };
+
+  const overdueMs = i.now.getTime() - i.nextReminderAt.getTime();
+  const cronStale = !i.lastCronAt || i.now.getTime() - i.lastCronAt.getTime() > CRON_STALE_MS;
+
+  if (overdueMs > CRON_STALE_MS && cronStale) {
+    return { text: "Reminders aren't running. Check the cron-job.org job.", warning: true };
+  }
+  if (overdueMs > 0) {
+    return { text: "Next reminder any minute now", warning: false };
+  }
+
+  const outsideHours = !inWindow(localHour(i.timezone, i.now), i.startHour, i.endHour);
+  const label = localClockLabel(i.timezone, i.nextReminderAt);
+  return {
+    text: outsideHours ? `Outside your hours. Next reminder at ${label}` : `Next reminder around ${label}`,
+    warning: false,
   };
 }

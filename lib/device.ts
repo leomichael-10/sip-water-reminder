@@ -43,11 +43,12 @@ async function supplementsToday(deviceId: string, tz: string): Promise<Supplemen
 export async function deviceState(id: string) {
   const device = await getOrCreateDevice(id);
   const now = new Date();
-  const [logs, subCount, lastLog, supplements] = await Promise.all([
+  const [logs, subCount, lastLog, supplements, appMeta] = await Promise.all([
     todayLogs(id, device.timezone),
     prisma.pushSubscription.count({ where: { deviceId: id } }),
     prisma.waterLog.findFirst({ where: { deviceId: id }, orderBy: { createdAt: "desc" } }),
     supplementsToday(id, device.timezone),
+    prisma.appMeta.findUnique({ where: { id: "singleton" } }),
   ]);
   const todayMl = logs.reduce((s, l) => s + l.amountMl, 0);
   const next = nextReminderAt({
@@ -77,6 +78,7 @@ export async function deviceState(id: string) {
     logs: logs.map((l) => ({ id: l.id, amountMl: l.amountMl, at: l.createdAt.toISOString() })),
     subscribed: subCount > 0,
     nextReminderAt: next ? next.toISOString() : null,
+    lastCronAt: appMeta?.lastCronAt ? appMeta.lastCronAt.toISOString() : null,
     supplements,
   };
 }

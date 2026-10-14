@@ -59,3 +59,8 @@ export function localTimeToday(tz: string, now: Date, hhmm: string) {
 export function isToday(tz: string, now: Date, instant: Date) {
   return instant.getTime() >= startOfLocalDay(tz, now).getTime();
 }
+
+/** "9:05 AM"-style clock label for an instant, in `tz`. */
+export function localClockLabel(tz: string, instant: Date) {
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(instant);
+}
