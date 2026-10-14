@@ -22,6 +22,7 @@ model Device {
 
   subscriptions PushSubscription[]
   logs          WaterLog[]
+  supplements   Supplement[]
 }
 
 model PushSubscription {
@@ -42,4 +43,32 @@ model WaterLog {
   createdAt DateTime @default(now())
 
   @@index([deviceId, createdAt])
+}
+
+/// Something taken on a daily schedule (a vitamin, a pill) — independent of water tracking.
+model Supplement {
+  id          String    @id @default(cuid())
+  deviceId    String
+  device      Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  name        String
+  timeOfDay   String    // "HH:MM", 24h, in the device's local time zone
+  enabled     Boolean   @default(true)
+  lastNudgeAt DateTime?
+  nudgesToday Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  logs SupplementLog[]
+
+  @@index([deviceId])
+}
+
+model SupplementLog {
+  id           String     @id @default(cuid())
+  supplementId String
+  supplement   Supplement @relation(fields: [supplementId], references: [id], onDelete: Cascade)
+  deviceId     String
+  takenAt      DateTime   @default(now())
+
+  @@index([supplementId, takenAt])
+  @@index([deviceId, takenAt])
 }
