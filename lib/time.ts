@@ -47,3 +47,15 @@ export function inWindow(hour: number, start: number, end: number) {
   if (start === end) return true; // all day
   return start < end ? hour >= start && hour < end : hour >= start || hour < end;
 }
+
+/** The UTC instant of `hhmm` ("HH:MM", 24h) local time, on today's local calendar date in `tz`. */
+export function localTimeToday(tz: string, now: Date, hhmm: string) {
+  const [hour, minute] = hhmm.split(":").map(Number);
+  const midnight = startOfLocalDay(tz, now);
+  return new Date(midnight.getTime() + hour * 60 * 60 * 1000 + minute * 60 * 1000);
+}
+
+/** Whether `instant` falls on the same local calendar day as `now`, in `tz`. */
+export function isToday(tz: string, now: Date, instant: Date) {
+  return instant.getTime() >= startOfLocalDay(tz, now).getTime();
+}
