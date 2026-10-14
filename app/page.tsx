@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { History, Settings, State } from "@/lib/types";
 import { readCachedState, writeCachedState } from "@/lib/stateCache";
+import { reminderStatusText } from "@/lib/schedule";
 import { HistoryChart } from "./history-chart";
 
 type PushStatus = "loading" | "unsupported" | "install" | "ask" | "denied" | "on";
@@ -37,7 +38,8 @@ const hourLabel = (h: number) =>
   h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
 const timeLabel = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-const ml = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n % 1000 ? 2 : 1).replace(/0$/, "")} L` : `${n} ml`);
+const ml = (n: number) =>
+  n >= 1000 ? `${n % 1000 === 0 ? n / 1000 : (n / 1000).toFixed(2).replace(/0$/, "")} L` : `${n} ml`;
 
 async function api(path: string, method = "GET", body?: unknown, signal?: AbortSignal) {
   const res = await fetch(path, {
@@ -77,6 +79,8 @@ export default function Home() {
   const [newSuppName, setNewSuppName] = useState("");
   const [newSuppTime, setNewSuppTime] = useState("09:00");
   const [celebrate, setCelebrate] = useState(false);
+  const [showAddSupplement, setShowAddSupplement] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const wasDoneRef = useRef(false);
 
   const flash = (msg: string) => {
@@ -292,6 +296,38 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [celebrate]);
 
+  // Re-evaluate the reminder-status text every 30s against a live clock, so it
+  // never gets stuck showing a time that has already passed.
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Refresh from the server whenever the app comes back to the foreground —
+  // a lot can change while it was backgrounded (including a cron run).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadState();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadState]);
+
+  const reminderStatus = useMemo(() => {
+    if (!state) return null;
+    return reminderStatusText({
+      now,
+      enabled: state.settings.enabled,
+      timezone: state.settings.timezone,
+      startHour: state.settings.startHour,
+      endHour: state.settings.endHour,
+      todayMl: state.todayMl,
+      goalMl: state.settings.goalMl,
+      nextReminderAt: state.nextReminderAt ? new Date(state.nextReminderAt) : null,
+      lastCronAt: state.lastCronAt ? new Date(state.lastCronAt) : null,
+    });
+  }, [state, now]);
+
   if (loadError && !state) {
     return (
       <main className="grid min-h-dvh place-items-center px-6 text-center">
@@ -323,7 +359,7 @@ export default function Home() {
   const done = state.todayMl >= s.goalMl;
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col px-5 pb-10 pt-4">
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col px-5 pb-10">
       {celebrate && (
         <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
           {BUTTERFLIES.map((b, i) => (
@@ -338,7 +374,10 @@ export default function Home() {
         </div>
       )}
 
-      <header className="flex items-center justify-between">
+      <header
+        className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-ink/95 px-5 pb-4 backdrop-blur"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
+      >
         <h1 className="text-2xl font-bold tracking-tight">Sip 🦋</h1>
         <div className="flex gap-2">
           <button
@@ -460,13 +499,15 @@ export default function Home() {
         )}
         {push === "on" && (
           <div className="mt-2 space-y-3 text-sm">
-            <p className="text-foam/80">
-              {s.enabled
-                ? `Every ${s.intervalMin >= 60 ? `${s.intervalMin / 60} h` : `${s.intervalMin} min`}, ${hourLabel(s.startHour)}–${hourLabel(s.endHour)}. Logging a drink resets the timer, and reminders stop once you hit your goal.`
-                : "Paused."}
-            </p>
-            {s.enabled && state.nextReminderAt && (
-              <p className="text-foam/60">Next reminder around {timeLabel(state.nextReminderAt)}</p>
+            {s.enabled && !done && (
+              <p className="text-foam/80">
+                {`Every ${s.intervalMin >= 60 ? `${s.intervalMin / 60} h` : `${s.intervalMin} min`}, ${hourLabel(s.startHour)}–${hourLabel(s.endHour)}. Logging a drink resets the timer, and reminders stop once you hit your goal.`}
+              </p>
+            )}
+            {reminderStatus && (
+              <p className={reminderStatus.warning ? "rounded-xl bg-red-500/10 px-3 py-2 text-red-300" : "text-foam/60"}>
+                {reminderStatus.text}
+              </p>
             )}
             <div className="flex gap-3">
               <button onClick={() => save({ enabled: !s.enabled })} className="flex-1 rounded-2xl bg-ink py-2.5 font-medium">
@@ -558,31 +599,61 @@ export default function Home() {
       )}
 
       {/* Vitamins */}
-      {state.supplements.length > 0 && (
-        <section className="mt-6 rounded-3xl bg-deep p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Vitamins today</h2>
+      <section className="mt-6 rounded-3xl bg-deep p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Vitamins today</h2>
+          {state.supplements.length > 0 && (
             <span className="text-sm text-foam/60">
               {state.supplements.filter((v) => v.takenToday).length} of {state.supplements.length} taken
             </span>
+          )}
+        </div>
+        {state.supplements.length === 0 && (
+          <p className="mt-2 text-sm text-foam/50">🦋 No vitamins yet.</p>
+        )}
+        <ul className="mt-3 space-y-2">
+          {state.supplements.map((v) => (
+            <li key={v.id}>
+              <button
+                onClick={() => toggleSupplement(v.id, v.takenToday)}
+                className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
+                  v.takenToday ? "bg-water/15 text-foam" : "bg-ink text-foam/80"
+                }`}
+              >
+                <span>{v.takenToday ? "✅" : "🦋"} {v.name}</span>
+                <span className="text-foam/50">{v.timeOfDay}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {showAddSupplement ? (
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              placeholder="Vitamin name"
+              value={newSuppName}
+              onChange={(e) => setNewSuppName(e.target.value)}
+              className="sel min-w-0 flex-1"
+            />
+            <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel" />
+            <button
+              onClick={() => {
+                addSupplement();
+                setShowAddSupplement(false);
+              }}
+              className="rounded-xl bg-ink px-3 py-2 font-medium active:scale-95"
+            >
+              Add
+            </button>
           </div>
-          <ul className="mt-3 space-y-2">
-            {state.supplements.map((v) => (
-              <li key={v.id}>
-                <button
-                  onClick={() => toggleSupplement(v.id, v.takenToday)}
-                  className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
-                    v.takenToday ? "bg-water/15 text-foam" : "bg-ink text-foam/80"
-                  }`}
-                >
-                  <span>{v.takenToday ? "✅" : "🦋"} {v.name}</span>
-                  <span className="text-foam/50">{v.timeOfDay}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        ) : (
+          <button
+            onClick={() => setShowAddSupplement(true)}
+            className="mt-3 text-sm text-water active:opacity-60"
+          >
+            + Add vitamin
+          </button>
+        )}
+      </section>
 
       {/* History */}
       {showHistory && (

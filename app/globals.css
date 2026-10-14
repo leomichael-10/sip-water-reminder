@@ -19,7 +19,9 @@
 html, body { background: var(--color-ink); color: var(--color-foam); }
 body {
   min-height: 100dvh;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Top inset is handled by the sticky header itself, so its background can
+     extend behind the notch/status bar instead of leaving a gap above it. */
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   -webkit-tap-highlight-color: transparent;
   font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
 }
