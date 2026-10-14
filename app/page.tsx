@@ -56,11 +56,35 @@ async function api(path: string, method = "GET", body?: unknown, signal?: AbortS
 const LOAD_TIMEOUT_MS = 10_000;
 
 const BUTTERFLIES = [
-  { left: "30%", delay: "0ms", drift: "-16px" },
-  { left: "48%", delay: "120ms", drift: "20px" },
-  { left: "62%", delay: "60ms", drift: "-10px" },
-  { left: "40%", delay: "200ms", drift: "14px" },
-  { left: "55%", delay: "260ms", drift: "-18px" },
+  { left: "22%", delay: "0ms", drift: "-16px", char: "🦋" },
+  { left: "35%", delay: "100ms", drift: "20px", char: "💕" },
+  { left: "48%", delay: "60ms", drift: "-10px", char: "🦋" },
+  { left: "58%", delay: "220ms", drift: "14px", char: "✨" },
+  { left: "40%", delay: "180ms", drift: "-14px", char: "🦋" },
+  { left: "66%", delay: "140ms", drift: "18px", char: "💕" },
+  { left: "30%", delay: "260ms", drift: "-20px", char: "🦋" },
+  { left: "72%", delay: "320ms", drift: "10px", char: "✨" },
+];
+
+const BG_BUTTERFLIES = [
+  { top: "8%", left: "12%", size: "text-2xl", delay: "-2s", duration: "24s" },
+  { top: "22%", left: "80%", size: "text-xl", delay: "-9s", duration: "19s" },
+  { top: "55%", left: "6%", size: "text-lg", delay: "-14s", duration: "26s" },
+  { top: "72%", left: "85%", size: "text-2xl", delay: "-5s", duration: "21s" },
+];
+
+const SPARKLES = [
+  { top: "15%", left: "28%", delay: "0s" },
+  { top: "40%", left: "90%", delay: "1.1s" },
+  { top: "64%", left: "18%", delay: "2.2s" },
+];
+
+const MASCOT_MESSAGES = [
+  "Sip sip hooray! 💙",
+  "You're glowing ✨",
+  "Flutter power! 🦋",
+  "Stay hydrated, cutie 💧",
+  "You've got this! 🌸",
 ];
 
 export default function Home() {
@@ -81,6 +105,13 @@ export default function Home() {
   const [celebrate, setCelebrate] = useState(false);
   const [showAddSupplement, setShowAddSupplement] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [mascotMsg, setMascotMsg] = useState("");
+  const [mascotTap, setMascotTap] = useState(0);
+  const [isFlapping, setIsFlapping] = useState(false);
+  const [squish, setSquish] = useState(0);
+  const [floaters, setFloaters] = useState<{ id: number; text: string }[]>([]);
+  const [ripple, setRipple] = useState(0);
+  const [burstId, setBurstId] = useState<string>("");
   const wasDoneRef = useRef(false);
 
   const flash = (msg: string) => {
@@ -162,12 +193,17 @@ export default function Home() {
   const drink = useCallback(
     async (amountMl?: number) => {
       if (!deviceId || !state) return;
-      if ("vibrate" in navigator) navigator.vibrate?.(10);
+      if ("vibrate" in navigator) navigator.vibrate?.([12, 20, 12]);
       const amount = amountMl ?? state.settings.glassMl;
       const previous = state;
       const optimisticLog = { id: `pending-${Date.now()}`, amountMl: amount, at: new Date().toISOString() };
       setState({ ...state, todayMl: state.todayMl + amount, logs: [optimisticLog, ...state.logs] });
       setFromReminder(false);
+      setSquish((n) => n + 1);
+      setRipple((n) => n + 1);
+      const floaterId = Date.now();
+      setFloaters((f) => [...f, { id: floaterId, text: `+${amount} ml 💧` }]);
+      setTimeout(() => setFloaters((f) => f.filter((x) => x.id !== floaterId)), 1200);
       try {
         commit(await api("/api/log", "POST", { deviceId, amountMl }));
       } catch (e) {
@@ -177,6 +213,14 @@ export default function Home() {
     },
     [deviceId, state]
   );
+
+  const tapMascot = () => {
+    setMascotTap((n) => n + 1);
+    setIsFlapping(true);
+    setTimeout(() => setIsFlapping(false), 600);
+    setMascotMsg(MASCOT_MESSAGES[Math.floor(Math.random() * MASCOT_MESSAGES.length)]);
+    setTimeout(() => setMascotMsg(""), 1800);
+  };
 
   const addCustom = () => {
     const amount = Math.round(Number(customMl));
@@ -225,6 +269,11 @@ export default function Home() {
         ...state,
         supplements: state.supplements.map((v) => (v.id === supplementId ? { ...v, takenToday: !takenToday } : v)),
       });
+      if (!takenToday) {
+        const id = `${supplementId}-${Date.now()}`;
+        setBurstId(id);
+        setTimeout(() => setBurstId((cur) => (cur === id ? "" : cur)), 700);
+      }
       try {
         commit(
           takenToday
@@ -336,7 +385,7 @@ export default function Home() {
           <p className="mt-2 text-sm text-foam/60">{loadError}</p>
           <button
             onClick={loadState}
-            className="mt-5 rounded-full bg-water px-6 py-2.5 font-semibold text-ink active:scale-95"
+            className="mt-5 min-h-11 rounded-full bg-water px-6 font-semibold text-ink active:scale-95"
           >
             Try again
           </button>
@@ -362,33 +411,55 @@ export default function Home() {
     <main className="mx-auto flex min-h-dvh max-w-md flex-col px-5 pb-10">
       {celebrate && (
         <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute inset-0 bg-gradient-to-t from-pink/10 via-transparent to-transparent" />
           {BUTTERFLIES.map((b, i) => (
             <span
               key={i}
-              className="flutter absolute bottom-24 text-4xl"
+              className="flutter absolute bottom-24 text-5xl"
               style={{ left: b.left, animationDelay: b.delay, "--drift": b.drift } as React.CSSProperties}
             >
-              🦋
+              {b.char}
             </span>
           ))}
         </div>
       )}
 
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+        {BG_BUTTERFLIES.map((b, i) => (
+          <span
+            key={i}
+            className={`bg-butterfly absolute ${b.size} opacity-20`}
+            style={{ top: b.top, left: b.left, animationDelay: b.delay, animationDuration: b.duration }}
+          >
+            🦋
+          </span>
+        ))}
+        {SPARKLES.map((sp, i) => (
+          <span
+            key={i}
+            className="sparkle absolute text-base"
+            style={{ top: sp.top, left: sp.left, animationDelay: sp.delay }}
+          >
+            ✨
+          </span>
+        ))}
+      </div>
+
       <header
-        className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-ink/95 px-5 pb-4 backdrop-blur"
+        className="sticky top-0 z-10 -mx-5 flex items-center justify-between border-b border-[var(--card-border)] bg-ink/90 px-5 pb-4 backdrop-blur-md"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
         <h1 className="text-2xl font-bold tracking-tight">Sip 🦋</h1>
         <div className="flex gap-2">
           <button
             onClick={toggleHistory}
-            className="rounded-full bg-deep px-4 py-2 text-sm font-medium text-foam/80 active:scale-95"
+            className="min-h-11 rounded-full bg-deep px-4 text-sm font-medium text-foam/80 active:scale-95"
           >
             {showHistory ? "Done" : "History"}
           </button>
           <button
             onClick={() => setShowSettings((v) => !v)}
-            className="rounded-full bg-deep px-4 py-2 text-sm font-medium text-foam/80 active:scale-95"
+            className="min-h-11 rounded-full bg-deep px-4 text-sm font-medium text-foam/80 active:scale-95"
           >
             {showSettings ? "Done" : "Settings"}
           </button>
@@ -401,45 +472,106 @@ export default function Home() {
         </p>
       )}
 
-      {/* Glass */}
+      {/* Glass + mascot */}
       <section className="mt-6 flex flex-col items-center">
-        <div className="relative h-72 w-48 overflow-hidden rounded-b-[3rem] rounded-t-xl border-4 border-foam/25 bg-deep/60">
-          <div
-            className="absolute inset-x-0 bottom-0 bg-water/80 transition-[height] duration-700 ease-out"
-            style={{ height: `${pct * 100}%` }}
+        <div className="flex items-end gap-3">
+          <button
+            key={mascotTap}
+            onClick={tapMascot}
+            aria-label="Butterfly mascot"
+            className={`relative mb-6 min-h-11 min-w-11 text-4xl ${
+              isFlapping
+                ? "mascot-flap"
+                : done
+                  ? "mascot-dance"
+                  : pct >= 0.5
+                    ? "mascot-happy"
+                    : pct < 0.25
+                      ? "mascot-sleepy"
+                      : ""
+            }`}
           >
-            {pct > 0 && pct < 1 && (
-              <svg className="wave absolute -top-3 left-0 h-4 w-[200%]" viewBox="0 0 200 10" preserveAspectRatio="none">
-                <path
-                  d="M0 5 Q 12.5 0 25 5 T 50 5 T 75 5 T 100 5 T 125 5 T 150 5 T 175 5 T 200 5 V10 H0 Z"
-                  fill="rgb(56 189 248 / 0.8)"
-                />
-              </svg>
+            🦋
+            {mascotMsg && (
+              <span className="glass-card absolute -top-12 left-1/2 w-max -translate-x-1/2 px-3 py-1.5 text-xs font-medium text-foam shadow-lg">
+                {mascotMsg}
+              </span>
             )}
-          </div>
-          <div className="absolute inset-0 grid place-items-center text-center">
-            <div>
-              <p className="text-4xl font-bold tabular-nums drop-shadow">{ml(state.todayMl)}</p>
-              <p className="mt-1 text-sm text-foam/80">of {ml(s.goalMl)}</p>
+          </button>
+
+          <button
+            onClick={() => drink()}
+            aria-label="Tap the glass to log a drink"
+            className="relative h-72 w-48 overflow-hidden rounded-[2.5rem] border-4 border-[var(--card-border)] bg-deep/60 active:scale-[0.98]"
+          >
+            <div
+              className="absolute inset-x-0 bottom-0 transition-[height] duration-700 ease-out"
+              style={{ height: `${pct * 100}%`, background: "linear-gradient(180deg, var(--color-water), var(--color-lavender))" }}
+            >
+              {pct > 0 && pct < 1 && (
+                <svg className="wave absolute -top-3 left-0 h-4 w-[200%]" viewBox="0 0 200 10" preserveAspectRatio="none">
+                  <path
+                    d="M0 5 Q 12.5 0 25 5 T 50 5 T 75 5 T 100 5 T 125 5 T 150 5 T 175 5 T 200 5 V10 H0 Z"
+                    fill="rgb(255 255 255 / 0.35)"
+                  />
+                </svg>
+              )}
+              {pct > 0 &&
+                [18, 42, 68, 85].map((left, i) => (
+                  <span
+                    key={i}
+                    className="bubble absolute bottom-2 rounded-full bg-white/60"
+                    style={{
+                      left: `${left}%`,
+                      width: `${6 + (i % 2) * 3}px`,
+                      height: `${6 + (i % 2) * 3}px`,
+                      animationDelay: `${i * 0.7}s`,
+                    }}
+                  />
+                ))}
             </div>
-          </div>
+            {ripple > 0 && (
+              <span
+                key={ripple}
+                className="ripple pointer-events-none absolute bottom-0 left-1/2 h-16 w-16 -translate-x-1/2 rounded-full border-2 border-white/60"
+                style={{ bottom: `${pct * 100}%` }}
+              />
+            )}
+            <div className="absolute inset-0 grid place-items-center text-center">
+              <div>
+                <p className="text-4xl font-bold tabular-nums drop-shadow">{ml(state.todayMl)}</p>
+                <p className="mt-1 text-sm text-foam/80">of {ml(s.goalMl)}</p>
+              </div>
+            </div>
+            {floaters.map((f) => (
+              <span
+                key={f.id}
+                className="float-up pointer-events-none absolute left-1/2 top-[70%] -translate-x-1/2 whitespace-nowrap rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-ink shadow"
+              >
+                {f.text}
+              </span>
+            ))}
+          </button>
         </div>
         <p className="mt-4 text-foam/70">
-          {done ? "Goal reached. Nice work 🎉" : `${glasses} of ${goalGlasses} glasses`}
+          {done ? "Goal reached. Nice work 🦋" : `${glasses} of ${goalGlasses} glasses`}
         </p>
       </section>
 
       {/* Log buttons */}
       <section className="mt-6">
         <button
+          key={squish}
           onClick={() => drink()}
-          className="w-full rounded-3xl bg-water py-5 text-xl font-bold text-ink shadow-lg shadow-water/20 active:scale-[0.98]"
+          className={`w-full rounded-3xl bg-water py-5 text-xl font-bold text-ink shadow-lg shadow-water/20 active:scale-[0.98] ${
+            squish ? "squish" : ""
+          }`}
         >
           + 1 glass ({s.glassMl} ml)
         </button>
         <div className="mt-3 grid grid-cols-3 gap-3">
           {[100, 500, 750].map((a) => (
-            <button key={a} onClick={() => drink(a)} className="rounded-2xl bg-deep py-3 font-medium active:scale-95">
+            <button key={a} onClick={() => drink(a)} className="min-h-11 rounded-2xl bg-deep py-3 font-medium active:scale-95">
               +{a} ml
             </button>
           ))}
@@ -453,16 +585,16 @@ export default function Home() {
             placeholder="Custom ml"
             value={customMl}
             onChange={(e) => setCustomMl(e.target.value)}
-            className="sel flex-1"
+            className="sel min-h-11 flex-1"
           />
-          <button onClick={addCustom} className="rounded-2xl bg-deep px-5 py-3 font-medium active:scale-95">
+          <button onClick={addCustom} className="min-h-11 rounded-2xl bg-deep px-5 font-medium active:scale-95">
             Add
           </button>
         </div>
       </section>
 
       {/* Reminders */}
-      <section className="mt-8 rounded-3xl bg-deep p-5">
+      <section className="glass-card mt-8 p-5">
         <h2 className="font-semibold">Reminders</h2>
         {pushError && (
           <p className="mt-2 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{pushError}</p>
@@ -492,7 +624,7 @@ export default function Home() {
           <button
             disabled={busy}
             onClick={turnOnReminders}
-            className="mt-3 w-full rounded-2xl bg-foam py-3 font-semibold text-ink disabled:opacity-50 active:scale-[0.98]"
+            className="mt-3 min-h-11 w-full rounded-2xl bg-foam py-3 font-semibold text-ink disabled:opacity-50 active:scale-[0.98]"
           >
             {busy ? "Turning on…" : "Turn on reminders"}
           </button>
@@ -510,10 +642,10 @@ export default function Home() {
               </p>
             )}
             <div className="flex gap-3">
-              <button onClick={() => save({ enabled: !s.enabled })} className="flex-1 rounded-2xl bg-ink py-2.5 font-medium">
+              <button onClick={() => save({ enabled: !s.enabled })} className="min-h-11 flex-1 rounded-2xl bg-ink py-2.5 font-medium">
                 {s.enabled ? "Pause" : "Resume"}
               </button>
-              <button onClick={test} className="flex-1 rounded-2xl bg-ink py-2.5 font-medium">
+              <button onClick={test} className="min-h-11 flex-1 rounded-2xl bg-ink py-2.5 font-medium">
                 Send a test
               </button>
             </div>
@@ -523,7 +655,7 @@ export default function Home() {
 
       {/* Settings */}
       {showSettings && (
-        <section className="mt-4 space-y-4 rounded-3xl bg-deep p-5 text-sm">
+        <section className="glass-card mt-4 space-y-4 p-5 text-sm">
           <Field label="Remind me every">
             <select value={s.intervalMin} onChange={(e) => save({ intervalMin: +e.target.value })} className="sel">
               {[15, 30, 45, 60, 90, 120, 180].map((m) => (
@@ -568,15 +700,15 @@ export default function Home() {
                 <input
                   defaultValue={v.name}
                   onBlur={(e) => e.target.value.trim() && e.target.value !== v.name && updateSupplement(v.id, { name: e.target.value.trim() })}
-                  className="sel min-w-0 flex-1"
+                  className="sel min-h-11 min-w-0 flex-1"
                 />
                 <input
                   type="time"
                   defaultValue={v.timeOfDay}
                   onBlur={(e) => e.target.value !== v.timeOfDay && updateSupplement(v.id, { timeOfDay: e.target.value })}
-                  className="sel"
+                  className="sel min-h-11"
                 />
-                <button onClick={() => deleteSupplement(v.id)} className="text-water active:opacity-60">
+                <button onClick={() => deleteSupplement(v.id)} className="min-h-11 px-2 text-water active:opacity-60">
                   Delete
                 </button>
               </div>
@@ -586,10 +718,10 @@ export default function Home() {
                 placeholder="Vitamin name"
                 value={newSuppName}
                 onChange={(e) => setNewSuppName(e.target.value)}
-                className="sel min-w-0 flex-1"
+                className="sel min-h-11 min-w-0 flex-1"
               />
-              <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel" />
-              <button onClick={addSupplement} className="rounded-xl bg-ink px-3 py-2 font-medium active:scale-95">
+              <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel min-h-11" />
+              <button onClick={addSupplement} className="min-h-11 rounded-xl bg-ink px-3 font-medium active:scale-95">
                 Add
               </button>
             </div>
@@ -599,7 +731,7 @@ export default function Home() {
       )}
 
       {/* Vitamins */}
-      <section className="mt-6 rounded-3xl bg-deep p-5">
+      <section className="glass-card mt-6 p-5">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Vitamins today</h2>
           {state.supplements.length > 0 && (
@@ -608,21 +740,34 @@ export default function Home() {
             </span>
           )}
         </div>
+        {state.supplements.length > 0 && state.supplements.every((v) => v.takenToday) && (
+          <p className="shimmer-badge mt-2 inline-block rounded-full px-3 py-1 text-xs font-bold text-ink">
+            Vitamin queen 👑🦋
+          </p>
+        )}
         {state.supplements.length === 0 && (
           <p className="mt-2 text-sm text-foam/50">🦋 No vitamins yet.</p>
         )}
         <ul className="mt-3 space-y-2">
           {state.supplements.map((v) => (
-            <li key={v.id}>
+            <li key={v.id} className="relative">
               <button
                 onClick={() => toggleSupplement(v.id, v.takenToday)}
-                className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
+                className={`flex min-h-11 w-full items-center justify-between rounded-2xl px-4 py-3 text-sm active:scale-[0.98] ${
                   v.takenToday ? "bg-water/15 text-foam" : "bg-ink text-foam/80"
                 }`}
               >
-                <span>{v.takenToday ? "✅" : "🦋"} {v.name}</span>
+                <span className={`relative inline-block ${v.takenToday ? "taken" : ""}`}>
+                  {v.takenToday ? "✅" : "🦋"} {v.name}
+                  <span className="strike-line" />
+                </span>
                 <span className="text-foam/50">{v.timeOfDay}</span>
               </button>
+              {burstId.startsWith(`${v.id}-`) && (
+                <span className="burst pointer-events-none absolute left-6 top-1/2 text-lg" aria-hidden="true">
+                  💕✨
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -632,15 +777,15 @@ export default function Home() {
               placeholder="Vitamin name"
               value={newSuppName}
               onChange={(e) => setNewSuppName(e.target.value)}
-              className="sel min-w-0 flex-1"
+              className="sel min-h-11 min-w-0 flex-1"
             />
-            <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel" />
+            <input type="time" value={newSuppTime} onChange={(e) => setNewSuppTime(e.target.value)} className="sel min-h-11" />
             <button
               onClick={() => {
                 addSupplement();
                 setShowAddSupplement(false);
               }}
-              className="rounded-xl bg-ink px-3 py-2 font-medium active:scale-95"
+              className="min-h-11 rounded-xl bg-ink px-3 font-medium active:scale-95"
             >
               Add
             </button>
@@ -648,7 +793,7 @@ export default function Home() {
         ) : (
           <button
             onClick={() => setShowAddSupplement(true)}
-            className="mt-3 text-sm text-water active:opacity-60"
+            className="mt-3 min-h-11 text-sm text-water active:opacity-60"
           >
             + Add vitamin
           </button>
@@ -657,7 +802,7 @@ export default function Home() {
 
       {/* History */}
       {showHistory && (
-        <section className="mt-4 rounded-3xl bg-deep p-5">
+        <section className="glass-card mt-4 p-5">
           <h2 className="font-semibold">Last 7 days</h2>
           {history ? (
             <div className="mt-3">
@@ -674,7 +819,7 @@ export default function Home() {
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Today</h2>
           {state.logs.length > 0 && (
-            <button onClick={undo} className="text-sm text-water active:opacity-60">
+            <button onClick={undo} className="min-h-11 px-1 text-sm text-water active:opacity-60">
               Undo last
             </button>
           )}

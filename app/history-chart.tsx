@@ -39,9 +39,23 @@ export function HistoryChart({ history }: { history: History }) {
           </span>
         ))}
       </div>
-      <p className="mt-3 text-sm text-foam/80">
-        {streak > 0 ? `🔥 ${streak} day${streak === 1 ? "" : "s"} hitting your goal` : "🦋 Hit your goal today to start a streak."}
-      </p>
+      {streak > 0 ? (
+        <div className="mt-3">
+          <p className="text-sm text-foam/80">
+            {streak} day{streak === 1 ? "" : "s"} hitting your goal
+          </p>
+          <div className="mt-1 flex flex-wrap gap-1 text-lg" aria-hidden="true">
+            {Array.from({ length: Math.min(streak, 10) }, (_, i) => (
+              <span key={i} className="streak-pop" style={{ animationDelay: `${i * 60}ms` }}>
+                🦋
+              </span>
+            ))}
+            {streak > 10 && <span className="self-center text-xs text-foam/50">+{streak - 10} more</span>}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-foam/80">🦋 Hit your goal today to start a streak.</p>
+      )}
     </div>
   );
 }
