@@ -12,7 +12,7 @@ function configure() {
   configured = true;
 }
 
-export type PushPayload = { title: string; body: string; url?: string };
+export type PushPayload = { title: string; body: string; url?: string; tag?: string };
 
 /** Sends to every subscription of a device. Removes subscriptions Apple says are gone. */
 export async function sendToDevice(deviceId: string, payload: PushPayload) {

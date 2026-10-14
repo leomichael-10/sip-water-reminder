@@ -16,7 +16,7 @@ self.addEventListener("push", (event) => {
       body: data.body || "Time for a glass of water.",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      tag: "water-reminder",
+      tag: data.tag || "water-reminder",
       renotify: true,
       data: { url: data.url || "/" },
     })
