@@ -72,6 +72,7 @@ export default function Home() {
   const [push, setPush] = useState<PushStatus>("loading");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [pushError, setPushError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [fromReminder, setFromReminder] = useState(false);
 
@@ -83,6 +84,7 @@ export default function Home() {
   // Load state, register the service worker, and work out where push setup stands.
   const loadState = useCallback(async () => {
     setLoadError("");
+    setPushError("");
     const id = getDeviceId();
     setDeviceId(id);
     setFromReminder(new URLSearchParams(location.search).get("from") === "reminder");
@@ -116,6 +118,7 @@ export default function Home() {
 
   const turnOnReminders = async () => {
     setBusy(true);
+    setPushError("");
     try {
       if (!VAPID) throw new Error("NEXT_PUBLIC_VAPID_PUBLIC_KEY is not set");
       const perm = await Notification.requestPermission(); // must run from a tap on iOS
@@ -131,7 +134,9 @@ export default function Home() {
       setPush("on");
       flash("Reminders are on 💧");
     } catch (e) {
-      flash((e as Error).message);
+      const message = (e as Error).message;
+      flash(message);
+      setPushError(`Couldn't turn on reminders: ${message}`);
     } finally {
       setBusy(false);
     }
@@ -170,11 +175,14 @@ export default function Home() {
   };
 
   const test = async () => {
+    setPushError("");
     try {
       await api("/api/test", "POST", { deviceId });
       flash("Test sent. Check your notifications.");
     } catch (e) {
-      flash((e as Error).message);
+      const message = (e as Error).message;
+      flash(message);
+      setPushError(`Test push failed: ${message}`);
       setPush("ask");
     }
   };
@@ -280,6 +288,9 @@ export default function Home() {
       {/* Reminders */}
       <section className="mt-8 rounded-3xl bg-deep p-5">
         <h2 className="font-semibold">Reminders</h2>
+        {pushError && (
+          <p className="mt-2 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{pushError}</p>
+        )}
         {push === "loading" && <p className="mt-2 text-sm text-foam/60">Checking…</p>}
         {push === "install" && (
           <div className="mt-2 space-y-2 text-sm text-foam/80">
