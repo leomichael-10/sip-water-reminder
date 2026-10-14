@@ -1,22 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Settings, State } from "@/lib/types";
 
-type Settings = {
-  timezone: string;
-  intervalMin: number;
-  startHour: number;
-  endHour: number;
-  goalMl: number;
-  glassMl: number;
-  enabled: boolean;
-};
-type State = {
-  settings: Settings;
-  todayMl: number;
-  logs: { id: string; amountMl: number; at: string }[];
-  subscribed: boolean;
-};
 type PushStatus = "loading" | "unsupported" | "install" | "ask" | "denied" | "on";
 
 const VAPID = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
