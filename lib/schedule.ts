@@ -1,4 +1,4 @@
-import { inWindow, localHour } from "./time";
+import { inWindow, localHour, startOfLocalDay } from "./time";
 
 export type ScheduleInput = {
   now: Date;
@@ -33,6 +33,30 @@ export function shouldRemind(i: ScheduleInput): Decision {
     return { send: false, reason: "too soon" };
 
   return { send: true };
+}
+
+/**
+ * Predicts when the next reminder would go out under the current settings,
+ * using the exact same eligibility rules as `shouldRemind`. Returns null if
+ * no reminder will fire at all (disabled, or today's goal already reached).
+ */
+export function nextReminderAt(i: ScheduleInput): Date | null {
+  if (!i.enabled) return null;
+  if (i.todayMl >= i.goalMl) return null;
+
+  const last = Math.max(i.lastSentAt?.getTime() ?? 0, i.lastLogAt?.getTime() ?? 0);
+  const earliest = last ? last + i.intervalMin * 60 * 1000 - GRACE_MS : i.now.getTime();
+  const candidate = new Date(Math.max(earliest, i.now.getTime()));
+
+  if (inWindow(localHour(i.timezone, candidate), i.startHour, i.endHour)) return candidate;
+
+  // Outside the active window: walk forward day by day to the next window start.
+  for (let d = 0; d <= 7; d++) {
+    const midnight = startOfLocalDay(i.timezone, new Date(candidate.getTime() + d * 86_400_000));
+    const windowStart = new Date(midnight.getTime() + i.startHour * 60 * 60 * 1000);
+    if (windowStart.getTime() >= candidate.getTime()) return windowStart;
+  }
+  return null;
 }
 
 const LINES = [
